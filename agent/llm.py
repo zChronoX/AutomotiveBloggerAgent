@@ -2,7 +2,7 @@
 Inizializzazione dei client LLM (Ollama).
 
 Architettura ibrida a due modelli:
-  - llm (Granite): il "cervello" — planning, scelta dei tool, ricerca, grading,
+  - llm (Ministral): il "cervello" — planning, scelta dei tool, ricerca, grading,
     routing, update KG. Veloce e affidabile nella scelta dei tool.
   - drafting_llm (Ministral): la "penna" — SOLO la stesura dell'articolo finale.
     Produce prosa piu' ricca e discorsiva, adatta a un blog.
@@ -24,5 +24,6 @@ drafting_llm = ChatOllama(
     model=config.draft_model_name,
     temperature=config.draft_temperature,
     num_ctx=config.draft_num_ctx,
+    num_predict=config.draft_num_predict,  # tetto di guardia anti-loop (solo stesura)
     keep_alive=0,
 )

@@ -39,9 +39,13 @@ load_dotenv()
 client = Client()
 
 # Giudice deterministico (temperature=0.0): la valutazione deve essere riproducibile.
-evaluator_llm = ChatOllama(model="ministral-3:8b", temperature=0.0)
+evaluator_llm = ChatOllama(model="ministral-3:3b", temperature=0.0)
 
-DATASET_NAME = "Blogger_Test_Dataset"
+# Dataset da valutare. Si puo' scegliere da riga di comando o da .env (EVAL_DATASET):
+#   python -m evaluation.evaluate_blog                  -> usa il default qui sotto
+#   python -m evaluation.evaluate_blog "Nome Dataset"   -> usa quello passato
+# Cosi' puoi lanciare prima il V1.1 (5 prompt) e poi il V2 (15 prompt) senza modificare il codice.
+DATASET_NAME = os.environ.get("EVAL_DATASET", "Blogger_Test_Dataset V1.1")
 
 
 # ============================================================
@@ -76,8 +80,8 @@ def run_blogger_until_draft(inputs: dict) -> dict:
         if msgs:
             draft = getattr(msgs[-1], "content", "") or ""
 
-    # Raccogliamo i NOMI DEI TOOL effettivamente invocati durante la run, scorrendo
-    # i tool_calls negli AIMessage della cronologia. Serve all'evaluator tool-usage.
+    # Raccogliamo i NOMI DEI TOOL effettivamente usati durante la run.
+    # (a) Tool SCELTI dal modello (ReAct): compaiono come tool_calls negli AIMessage.
     tools_called = []
     for m in values.get("messages", []):
         for tc in (getattr(m, "tool_calls", None) or []):
@@ -85,10 +89,20 @@ def run_blogger_until_draft(inputs: dict) -> dict:
             if name:
                 tools_called.append(name)
 
+    # (b) Tool DETERMINISTICI (K-RAG): KG e RAG locale sono invocati dal codice, NON dal
+    # modello, quindi non compaiono nei tool_calls. Li deduciamo dallo stato: se c'e' contesto
+    # KG o documenti locali, quei tool sono stati eseguiti. Senza questo, l'evaluator tool-usage
+    # sottostimerebbe (segnalando "nessun tool" anche con K-RAG attivo).
+    if values.get("kg_summary"):
+        tools_called.append("query_knowledge_graph")
+    if values.get("local_sources"):
+        tools_called.append("retrieve_local_documents")
+
     return {
         "draft_content": draft,
         "status": values.get("status", ""),
         "sources": values.get("sources", []) or [],
+        "local_sources": values.get("local_sources", []) or [],
         "interrupted": bool(snapshot.next) if snapshot else False,
         "tools_called": tools_called,
         "user_input": user_input,
@@ -243,37 +257,53 @@ def evaluate_tool_usage(run, example) -> dict:
 def observability_report(project_name: str = None, limit: int = 50) -> dict:
     """
     Estrae i parametri di osservabilita' delle run dal progetto LangSmith:
-    latenza media, errori, numero medio di run figlie (proxy del numero di step).
+    latenza media, errori, e numero medio di step per esecuzione del grafo.
     Soddisfa "in terms of observability parameters available in Langsmith".
+
+    NOTA sul conteggio degli step: 'child_run_ids' spesso NON e' popolato da list_runs
+    (per questo prima gli step risultavano 0). Contiamo invece in modo affidabile:
+    - le run ROOT (is_root=True) = una per esecuzione del grafo;
+    - TUTTE le run del progetto;
+    e ricaviamo gli step medi come (run totali / run root): ogni nodo/sotto-step e' una run.
     """
     project = project_name or os.environ.get("LANGSMITH_PROJECT", "blogger-copilot")
     try:
-        runs = list(client.list_runs(project_name=project, limit=limit))
+        # L'API di LangSmith accetta al massimo 100 run per richiesta: non superare quel tetto.
+        fetch_limit = min(limit * 20, 100)
+        all_runs = list(client.list_runs(project_name=project, limit=fetch_limit))
     except Exception as e:
         return {"error": f"Impossibile leggere le run da LangSmith: {e}"}
 
-    if not runs:
+    if not all_runs:
         return {"info": f"Nessuna run trovata nel progetto '{project}'."}
 
-    latencies, errors, child_counts = [], 0, []
-    for r in runs:
+    # Le run ROOT sono le esecuzioni complete del grafo (quelle che ci interessano per
+    # latenza ed errori a livello di richiesta utente).
+    root_runs = [r for r in all_runs if getattr(r, "is_root", False)]
+    # Fallback: se l'attributo is_root non e' disponibile, usiamo quelle senza parent.
+    if not root_runs:
+        root_runs = [r for r in all_runs if not getattr(r, "parent_run_id", None)]
+
+    latencies, errors = [], 0
+    for r in root_runs:
         if getattr(r, "start_time", None) and getattr(r, "end_time", None):
             latencies.append((r.end_time - r.start_time).total_seconds())
         if getattr(r, "error", None):
             errors += 1
-        cr = getattr(r, "child_run_ids", None)
-        child_counts.append(len(cr) if cr else 0)
 
-    n = len(runs)
+    n_root = len(root_runs) or 1
+    n_all = len(all_runs)
     avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
-    avg_children = sum(child_counts) / len(child_counts) if child_counts else 0.0
+    # Step medi per esecuzione: tutte le run (nodi + sotto-step) diviso le esecuzioni complete.
+    avg_steps = round(n_all / n_root, 2)
     return {
         "project": project,
-        "runs_analizzate": n,
+        "esecuzioni_grafo (root)": n_root,
+        "run_totali (nodi+step)": n_all,
         "latenza_media_s": round(avg_latency, 2),
         "run_con_errori": errors,
-        "tasso_errore": round(errors / n, 3),
-        "step_medi_per_run": round(avg_children, 2),
+        "tasso_errore": round(errors / n_root, 3),
+        "step_medi_per_esecuzione": avg_steps,
     }
 
 
@@ -284,15 +314,18 @@ if __name__ == "__main__":
     from config import check_langsmith_setup
     from langsmith.evaluation import evaluate
 
+    # Dataset: argomento da riga di comando se fornito, altrimenti il default (V1.1).
+    dataset_name = sys.argv[1] if len(sys.argv) > 1 else DATASET_NAME
+
     print("== Suite di valutazione Blogger Copilot ==")
     if not check_langsmith_setup():
         print("LangSmith non configurato: la valutazione puo' girare ma senza tracing/dashboard.")
 
-    print(f"\nAvvio valutazione sul dataset '{DATASET_NAME}'...")
+    print(f"\nAvvio valutazione sul dataset '{dataset_name}'...")
     try:
         results = evaluate(
             run_blogger_until_draft,
-            data=DATASET_NAME,
+            data=dataset_name,
             evaluators=[evaluate_quality, evaluate_grounding, evaluate_failure_cases, evaluate_tool_usage],
             experiment_prefix="Blogger_Eval_Run",
         )

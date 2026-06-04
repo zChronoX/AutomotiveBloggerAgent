@@ -4,14 +4,17 @@ from langchain_core.tools import tool
 from langchain_ollama import ChatOllama
 from langchain_core.messages import HumanMessage, SystemMessage
 from tavily import TavilyClient
-from prompts.tool_prompts import PHI4_VEHICLE_RESEARCH_PROMPT, TINY_JUDGE_SYSTEM_PROMPT
+from prompts.tool_prompts import VEHICLE_RESEARCH_PROMPT, TINY_JUDGE_SYSTEM_PROMPT
 
 # Client Tavily
 tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
 
 # Nomi dei modelli (allineati a `ollama list`)
-RESEARCHER_MODEL = "phi4-mini:latest"          # sintesi fattuale dei dati grezzi
-JUDGE_MODEL = "llama3.2:1b_fine_tuned"          # giudice fine-tuned per la comparazione
+# RICERCATORE: Ministral (lo stesso "cervello" del grafo). Il confronto empirico su testi
+# reali ha mostrato che Ministral riassume con pari/maggiore fedelta' ai dati ed e' piu' veloce
+# di Phi4-Mini; usarlo qui evita di caricare un terzo modello in VRAM (resta Ministral + giudice).
+RESEARCHER_MODEL = "ministral-3:3b"             # sintesi fattuale dei dati grezzi
+JUDGE_MODEL = "llama3.2:1b_fine_tuned"          # giudice fine-tuned per la comparazione (4 categorie + verdetto)
 
 
 # ==========================================
@@ -19,17 +22,20 @@ JUDGE_MODEL = "llama3.2:1b_fine_tuned"          # giudice fine-tuned per la comp
 # Schema "piatto" (campi semplici invece di oggetti annidati): i modelli locali
 # popolano gli argomenti del tool in modo molto piu' affidabile cosi'.
 # ==========================================
+from typing import Optional
+
+
 class CompareVehiclesInput(BaseModel):
     tipo: str = Field(description="Specifica se e' 'Auto' o 'Moto'")
     v1_marca: str = Field(description="Marca del primo veicolo (es. Fiat)")
     v1_modello: str = Field(description="Modello del primo veicolo (es. Panda)")
-    v1_anno: str = Field(description="Anno del primo veicolo (es. 2024)")
-    v1_motore: str = Field(description="Motorizzazione del primo veicolo (es. 1.0 Hybrid)")
+    v1_anno: Optional[str] = Field(default="", description="Anno del primo veicolo (es. 2024). Opzionale.")
+    v1_motore: Optional[str] = Field(default="", description="Motorizzazione del primo veicolo (es. 1.0 Hybrid). Opzionale.")
 
     v2_marca: str = Field(description="Marca del secondo veicolo (es. Dacia)")
     v2_modello: str = Field(description="Modello del secondo veicolo (es. Sandero)")
-    v2_anno: str = Field(description="Anno del secondo veicolo (es. 2024)")
-    v2_motore: str = Field(description="Motorizzazione del secondo veicolo (es. 1.0 TCe)")
+    v2_anno: Optional[str] = Field(default="", description="Anno del secondo veicolo (es. 2024). Opzionale.")
+    v2_motore: Optional[str] = Field(default="", description="Motorizzazione del secondo veicolo (es. 1.0 TCe). Opzionale.")
 
 
 class VehicleSpec:
@@ -76,19 +82,31 @@ def deep_research_vehicle(vehicle: VehicleSpec) -> str:
             testo_grezzo = "Dati web non disponibili."
 
     researcher = ChatOllama(model=RESEARCHER_MODEL, temperature=0.0, keep_alive=0)
-    prompt = PHI4_VEHICLE_RESEARCH_PROMPT.format(query_base=query, testo_grezzo=testo_grezzo)
+    prompt = VEHICLE_RESEARCH_PROMPT.format(query_base=query, testo_grezzo=testo_grezzo)
     summary = researcher.invoke([HumanMessage(content=prompt)])
-    return summary.content
+    profile = (summary.content or "").strip()
+
+    # RETE DI SICUREZZA: il giudice Llama 3.2 fine-tuned e' addestrato su profili brevi
+    # (~150-200 token, finestra max 2048). Se Ministral, nonostante il prompt, produce un
+    # profilo troppo lungo, lo tronchiamo per non mandare il giudice fuori distribuzione
+    # (cosa che lo faceva collassare generando solo il titolo). ~900 caratteri ~= 200 token.
+    MAX_PROFILE_CHARS = 900
+    if len(profile) > MAX_PROFILE_CHARS:
+        profile = profile[:MAX_PROFILE_CHARS].rsplit(" ", 1)[0] + "..."
+    return profile
 
 
 # ==========================================
 # TOOL DI COMPARAZIONE
 # ==========================================
 @tool("compare_vehicles", args_schema=CompareVehiclesInput)
-def compare_vehicles_tool(tipo: str, v1_marca: str, v1_modello: str, v1_anno: str, v1_motore: str,
-                          v2_marca: str, v2_modello: str, v2_anno: str, v2_motore: str) -> str:
+def compare_vehicles_tool(tipo: str, v1_marca: str, v1_modello: str,
+                          v2_marca: str, v2_modello: str,
+                          v1_anno: str = "", v1_motore: str = "",
+                          v2_anno: str = "", v2_motore: str = "") -> str:
     """
-    Usa questo tool SOLO per confrontare due auto o moto. Inserisci i dati precisi per entrambi i veicoli.
+    Usa questo tool SOLO per confrontare due auto o moto. Indica marca e modello di entrambi
+    (anno e motorizzazione sono opzionali: se non li conosci, lasciali vuoti).
     """
     veicolo_1 = VehicleSpec(tipo, v1_marca, v1_modello, v1_anno, v1_motore)
     veicolo_2 = VehicleSpec(tipo, v2_marca, v2_modello, v2_anno, v2_motore)

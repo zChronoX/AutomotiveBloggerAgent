@@ -50,9 +50,14 @@ def wants_post(text: str) -> bool:
 # ============================================================
 # SOURCE VALIDATION (guardrail fonti)
 # ============================================================
+# Tool le cui osservazioni contano come "fonte di contenuto" sufficiente a NON forzare
+# la ricerca web. NOTA: fetch_automotive_trends (feed RSS) e' ESCLUSO di proposito: e'
+# una lista di titoli di tendenza, non contenuto reale su un tema specifico. Se il modello
+# ha solo i trend, il guardrail deve comunque spingerlo a cercare sul web (es. un evento
+# di attualita' come un salone richiede una ricerca vera, non i titoli RSS).
 _GROUNDING_TOOLS = {
     "retrieve_local_documents", "mcp_web_search",
-    "fetch_vehicle_specs", "compare_vehicles", "fetch_automotive_trends",
+    "fetch_vehicle_specs", "compare_vehicles",
 }
 
 
@@ -180,8 +185,11 @@ def modification_needs_research(feedback: str) -> bool:
 _VAGUE_STANDALONE = (
     "scrivimi qualcosa", "scrivi qualcosa", "scrivi un post", "scrivimi un post",
     "scrivi un articolo", "scrivimi un articolo", "dammi un articolo", "dammi un post",
-    "parlami di auto", "parlami di moto", "parlami di motori", "un post a caso",
-    "un argomento qualsiasi",
+    "parlami di auto", "parlami di moto", "parlami di motori",
+    "parlami di una moto", "parlami di una auto", "parlami di un auto",
+    "parlami di un moto", "parlami di una macchina", "parlami di un veicolo",
+    "scrivi di una moto", "scrivi di una auto", "scrivi di un auto",
+    "un post a caso", "un argomento qualsiasi",
 )
 _VAGUE_ALWAYS = (
     "fai tu", "fai te", "decidi tu", "scrivi tu", "quello che vuoi",
@@ -232,3 +240,49 @@ def is_clearly_vague(user_input: str) -> bool:
     if len(words) <= 3 and all(w in generic_words for w in words):
         return True
     return False
+
+
+# Parole da scartare nel derivare il TOPIC CANONICO (chiave di matching del KG).
+# Rimuoviamo articoli, preposizioni, parole editoriali e di taglio, in modo che
+# "La Giulia Quadrifoglio: storia, simbolo e eredita' dinastica" e
+# "Scrivi un post sulla Alfa Romeo Giulia Quadrifoglio" convergano su una chiave simile.
+_TOPIC_STOPWORDS = {
+    "il", "lo", "la", "i", "gli", "le", "un", "uno", "una", "di", "del", "dello",
+    "della", "dei", "degli", "delle", "a", "ad", "da", "in", "con", "su", "sul",
+    "sulla", "sui", "sulle", "per", "tra", "fra", "e", "ed", "o", "come", "che",
+    "scrivi", "scrivimi", "parlami", "dammi", "post", "articolo", "un", "guida",
+    "completa", "dettagliata", "recensione", "confronto", "storia", "simbolo",
+    "eredita", "eredità", "dinastica", "significato", "descrizione", "tecnica",
+    "approfondimento", "tutto", "sul", "vs", "chiarimento", "informazioni", "generali",
+}
+
+
+def canonical_topic(raw: str) -> str:
+    """
+    Deriva una CHIAVE DI TOPIC canonica, breve e normalizzata, da una richiesta o
+    da un titolo. Serve come chiave di matching nel KG per la gap-analysis: due post
+    sullo stesso soggetto devono produrre la STESSA chiave.
+
+    Strategia deterministica e robusta:
+    - minuscolo, rimozione punteggiatura;
+    - taglio alla prima virgola/due punti (i titoli editoriali mettono il taglio dopo);
+    - rimozione di articoli, preposizioni e parole editoriali (taglio/forma del post);
+    - si tengono al massimo le prime 4 parole di sostanza (il soggetto: marca+modello).
+    Esempi:
+      "La Giulia Quadrifoglio: storia, simbolo e eredita' dinastica" -> "giulia quadrifoglio"
+      "Scrivi un post sulla Alfa Romeo Giulia Quadrifoglio" -> "alfa romeo giulia quadrifoglio"
+    """
+    if not raw:
+        return ""
+    s = raw.lower().replace("'", " ").replace("’", " ")
+    # taglia al primo separatore di sottotitolo (i due punti o la prima virgola)
+    for sep in (":", " - ", " – "):
+        if sep in s:
+            s = s.split(sep)[0]
+            break
+    # rimuovi punteggiatura residua
+    for ch in ",.;()[]\"":
+        s = s.replace(ch, " ")
+    words = [w for w in s.split() if w and w not in _TOPIC_STOPWORDS and len(w) > 1]
+    # tieni le prime 4 parole di sostanza (marca + modello + eventuale variante)
+    return " ".join(words[:4]).strip()

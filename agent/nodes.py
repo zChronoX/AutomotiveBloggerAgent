@@ -12,8 +12,6 @@ Ogni funzione corrisponde a un nodo nel grafo e implementa un passo del flusso:
   FASE 4 - drafting_node:        Stesura con coerenza KG e citazioni (K-RAG)
            review_node:           Human-in-the-loop (interrupt/Command)
   FASE 5 - update_kg_node:       Pubblicazione (copertina + SEO + salvataggio KG)
-
-Codice estratto da blogger_agent.py, logica invariata.
 """
 
 import re
@@ -25,10 +23,10 @@ from langgraph.graph import END
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 
 from .llm import llm, drafting_llm
-from .state import PlanningSchema, ClarifyWithUser, ResearchBrief
+from .state import PlanningSchema, ClarifyWithUser, ResearchBrief, KGExtraction
 from .helpers import (
     trace, has_collected_sources, strip_reasoning_preamble, normalize_tool_args,
-    wants_post, modification_needs_research, is_clearly_vague,
+    wants_post, modification_needs_research, is_clearly_vague, canonical_topic,
 )
 from config.settings import Configuration
 from prompts.system_prompts import (
@@ -36,7 +34,7 @@ from prompts.system_prompts import (
 )
 from prompts.agent_prompts import (
     PLANNING_PROMPT, RESEARCH_KICKOFF, DRAFT_PROMPT,
-    CLARIFICATION_PROMPT, BRIEF_PROMPT,
+    CLARIFICATION_PROMPT, BRIEF_PROMPT, KG_EXTRACTION_PROMPT,
 )
 from utils import should_grade_tool
 from tools.base import get_all_tools, get_react_tools
@@ -62,15 +60,13 @@ MAX_CLARIFICATIONS = 2
 
 
 # ============================================================
-# FASE 0 - SCOPING (notebook 1 Deep Research): clarification + brief
+# FASE 0 - SCOPING: clarification + brief
 # ============================================================
 def clarification_node(state: dict):
     """
     Valuta con structured output se la richiesta dell'utente e' chiara o vaga.
     Se vaga (e non abbiamo gia' chiesto troppe volte), si ferma con interrupt() e
     chiede un chiarimento all'utente (Human-in-the-loop). Se chiara, prosegue al brief.
-
-    Ripreso dal notebook 1_scoping.ipynb del tutorial Deep Research di LangGraph.
     """
     msgs = state.get("messages", [])
     user_input = state.get("user_input") or (msgs[-1].content if msgs else "")
@@ -85,10 +81,13 @@ def clarification_node(state: dict):
     # ("scrivimi qualcosa", "fai tu", ...). Su queste forziamo SEMPRE il chiarimento,
     # senza dipendere dal giudizio del modello 3B (che oscilla troppo). Per i casi
     # sfumati lasciamo invece decidere il modello con structured output.
-    forced_vague = is_clearly_vague(user_input)
+    # IMPORTANTE: la applichiamo solo al PRIMO passaggio. Se l'utente ha gia' fornito un
+    # chiarimento (clarif_count > 0), NON la rivalutiamo (altrimenti la richiesta originale
+    # generica la farebbe riscattare, stampando messaggi fuorvianti): lasciamo decidere il
+    # modello sulla richiesta ormai arricchita.
+    forced_vague = is_clearly_vague(user_input) if clarif_count == 0 else False
 
     if forced_vague:
-        print("[FASE 0 - SCOPING] Richiesta palesemente generica (regola deterministica).")
         decision_need = True
         decision_question = (
             "La tua richiesta e' un po' generica. Su cosa ti piacerebbe scrivere? "
@@ -96,6 +95,7 @@ def clarification_node(state: dict):
             "tecnica (es. manutenzione, ADAS, batterie), oppure un confronto tra due veicoli?"
         )
         decision_verification = ""
+        decision_reason = "deterministica"
     else:
         clarifier = llm.with_structured_output(ClarifyWithUser)
         try:
@@ -103,13 +103,13 @@ def clarification_node(state: dict):
             decision_need = decision.need_clarification
             decision_question = decision.question
             decision_verification = decision.verification
+            decision_reason = "modello"
         except Exception as e:
             # Se lo structured output fallisce, non blocchiamo il flusso: procediamo
             print(f"[FASE 0 - SCOPING] Clarification non riuscita ({e}): procedo senza chiarimenti.")
             return {"user_input": user_input, "status": "scoped"}
 
     if decision_need:
-        print("\n[FASE 0 - SCOPING] Richiesta vaga: chiedo un chiarimento all'utente (HITL).")
         # Interrupt HITL: stesso meccanismo della review, distinto dal campo 'action'
         request = {
             "action_request": {
@@ -124,6 +124,11 @@ def clarification_node(state: dict):
         }
         answer = interrupt(request)
         rtype = answer.get("type") if isinstance(answer, dict) else None
+
+        # A questo punto l'interrupt si e' risolto: logghiamo la decisione UNA volta sola
+        # (il codice sopra l'interrupt si riesegue alla ripresa, qui sotto no).
+        reason_lbl = "regola deterministica" if decision_reason == "deterministica" else "valutazione del modello"
+        print(f"[FASE 0 - SCOPING] Richiesta giudicata vaga ({reason_lbl}): chiesto chiarimento (HITL).")
 
         if rtype == "ignore":
             # L'utente non vuole chiarire: procediamo con la richiesta originale
@@ -154,7 +159,6 @@ def clarification_node(state: dict):
 def brief_node(state: dict):
     """
     Trasforma la richiesta (eventualmente chiarita) in un BRIEF editoriale strutturato.
-    Ripreso dal notebook 1_scoping.ipynb (Brief Generation).
     """
     user_input = state.get("user_input", "")
     briefer = llm.with_structured_output(ResearchBrief)
@@ -291,12 +295,15 @@ def research_agent_node(state: dict):
     # Al primo ingresso prepariamo system prompt + kickoff di ricerca col contesto K-RAG
     if not any(isinstance(m, ToolMessage) for m in msgs) and state.get("status") == "planned":
         topic = state.get("current_topic", "")
-        kg_ctx = kg_topic_context(topic)
+        # Chiave canonica per interrogare il KG: derivata dal TEMA PULITO (current_topic dal
+        # planner), NON dall'user_input grezzo che puo' contenere il dialogo di chiarimento.
+        topic_key = canonical_topic(topic) or canonical_topic(state.get("research_brief", ""))
+        kg_ctx = kg_topic_context(topic_key)
 
         # --- QUERY EXPANSION dal KG ---
         # Prendiamo i topic correlati dal Knowledge Graph e li accodiamo alla query
         # di retrieval, per espanderla (requisito: "use the KG to expand/refine queries").
-        related = kg_related_topics(topic)
+        related = kg_related_topics(topic_key)
         expanded_query = topic
         if related:
             expanded_query = f"{topic} {' '.join(related)}"
@@ -359,7 +366,21 @@ def research_agent_node(state: dict):
             "reasoning_trace": trace(state, "FASE 3 - K-RAG (KG+RAG deterministici):\n" + react_steps),
         }
 
-    response = llm_with_tools.invoke(msgs)
+    # Protezione: la generazione della tool call puo' fallire (es. il modello costruisce
+    # argomenti che violano lo schema di un tool -> errore di validazione dentro invoke).
+    # Non deve far cadere l'intera app: in caso di errore, procediamo verso la stesura con
+    # le fonti gia' raccolte (degradazione controllata invece di crash).
+    try:
+        response = llm_with_tools.invoke(msgs)
+    except Exception as e:
+        print(f"[Research] Errore nella generazione della tool call ({e}). "
+              f"Procedo alla stesura con le fonti gia' raccolte.")
+        return {
+            "messages": [AIMessage(content="")],
+            "status": "researched",
+            "reasoning_trace": trace(state, f"FASE 3 - ReAct: errore tool call ({type(e).__name__}), "
+                                            f"procedo alla stesura con le fonti disponibili."),
+        }
     # Trace ReAct per i passi successivi: se il modello chiama un tool lo registriamo come Action
     tool_calls = getattr(response, "tool_calls", None) or []
     if tool_calls:
@@ -470,7 +491,9 @@ def drafting_node(state: dict):
     """Stesura dell'articolo con coerenza KG e citazioni dalle fonti realmente recuperate."""
     msgs = state.get("messages", [])
     topic = state.get("current_topic", "")
-    consistency = kg_topic_context(topic)
+    # Chiave canonica dal TEMA PULITO (non dall'user_input grezzo col dialogo di chiarimento).
+    topic_key = canonical_topic(topic) or canonical_topic(state.get("research_brief", ""))
+    consistency = kg_topic_context(topic_key)
 
     # Raccogliamo TUTTE le fonti di grounding effettivamente recuperate durante il ReAct:
     # web search, schede tecniche (specs), confronti, trend. Sono le UNICHE fonti che il
@@ -486,7 +509,10 @@ def drafting_node(state: dict):
             if (content.strip()
                     and "errore" not in content.lower()[:40]
                     and "nessun" not in content.lower()[:30]):
-                sources.append(f"[{m.name}] {content[:600]}")
+                # La ricerca web ora restituisce un output strutturato per-fonte (titolo +
+                # URL + riassunto): le diamo piu' spazio per non tagliare gli URL da citare.
+                limit = 1500 if getattr(m, "name", "") == "mcp_web_search" else 600
+                sources.append(f"[{m.name}] {content[:limit]}")
 
     # Aggiungiamo i documenti locali recuperati deterministicamente nel K-RAG
     # (non sono ToolMessage perche' iniettati nel kickoff, ma vanno citati come fonti).
@@ -651,15 +677,36 @@ def update_kg_node(state: dict) -> Command[Literal["__end__"]]:
     except Exception as e:
         print(f"[PUBLISH] Analisi SEO non riuscita: {e}")
 
-    # --- 3. SALVATAGGIO nel Knowledge Graph ---
-    print(f"[KG] Salvataggio del post '{post_title}' nel Knowledge Graph...")
+    # --- 3. ESTRAZIONE CONOSCENZA (key claims + related topics) dal post approvato ---
+    # Riempie i campi 'claims' e 'relationships' del KG richiesti dalle specifiche.
+    claims, related = [], []
+    try:
+        extractor = llm.with_structured_output(KGExtraction)
+        extraction = extractor.invoke([
+            SystemMessage(content=KG_EXTRACTION_PROMPT),
+            HumanMessage(content=f"Titolo: {post_title}\n\nArticolo:\n{draft[:4000]}"),
+        ])
+        claims = [c.strip() for c in (extraction.key_claims or []) if c and c.strip()]
+        related = [r.strip().lower() for r in (extraction.related_topics or []) if r and r.strip()]
+        print(f"[KG] Estratti {len(claims)} claim e {len(related)} topic correlati dal post.")
+    except Exception as e:
+        print(f"[KG] Estrazione claim/related non riuscita ({e}): salvo senza arricchimento.")
+
+    # --- 4. SALVATAGGIO nel Knowledge Graph ---
+    # TOPIC CANONICO deterministico: chiave breve e normalizzata (marca+modello/soggetto),
+    # derivata dal TEMA PULITO (current_topic dal planner), NON dall'user_input grezzo che puo'
+    # contenere il dialogo di chiarimento. Garantisce che post sullo STESSO soggetto aggancino
+    # lo stesso nodo Topic -> la gap-analysis riconosce i doppioni.
+    # Il TITOLO resta la stringa editoriale lunga (titolo dell'articolo).
+    canon = canonical_topic(topic) or canonical_topic(state.get("research_brief", ""))
+    print(f"[KG] Salvataggio del post '{post_title}' (topic canonico: '{canon}') nel Knowledge Graph...")
     result = update_kg_data(
-        topic=topic,
+        topic=canon,
         post_title=post_title,
         category=category,
         sources=sources,
-        claims=[],
-        related_topics=[],
+        claims=claims,
+        related_topics=related,
         content=draft,
         seo_score=seo_score,
         cover_image=cover_path,

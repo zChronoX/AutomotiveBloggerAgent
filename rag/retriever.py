@@ -30,13 +30,16 @@ _cfg = Configuration()
 
 # Recuperiamo piu' candidati (k) e poi filtriamo per distanza, cosi' all'agente
 # arrivano solo i chunk davvero pertinenti, ordinati dal migliore.
-TOP_K = 5
+# Valori ora configurabili da .env (RAG_TOP_K, RAG_DISTANCE_THRESHOLD) senza toccare il codice.
+TOP_K = _cfg.rag_top_k
 
-# Soglia di distanza PERMISSIVA, tarata empiricamente sui documenti reali
-# (vedi diagnostics/tune_rag_threshold.py): i chunk pertinenti per tema osservati
-# stavano fino a ~1.15 (alcuni temi "difficili" come il tagliando ibride fino a ~1.145).
-# 1.175 li cattura tutti lasciando il filtro fine di rilevanza al Self-RAG.
-DISTANCE_THRESHOLD = 1.175
+# Soglia di distanza: piu' BASSA = piu' selettiva. Tarata su dati reali (1.10): tiene i
+# pertinenti (fino a ~1.065) e scarta i non pertinenti (da ~1.216). Il filtro fine resta al Self-RAG.
+DISTANCE_THRESHOLD = _cfg.rag_distance_threshold
+
+# Soglia del FALLBACK: quando il filtro principale scarta tutto, teniamo il documento migliore
+# SOLO se sotto questa soglia piu' permissiva. Oltre, niente fonte (meglio nessuna che sbagliata).
+FALLBACK_MAX = _cfg.rag_fallback_max
 
 
 def _doc_source(doc) -> str:
@@ -71,13 +74,21 @@ def retrieve_local(query: str) -> str:
         if _cfg.debug:
             print("[DIAG RAG] distanze:", [round(s, 3) for _, s in scored])
 
-        # Filtro permissivo per distanza
+        # Filtro per distanza (soglia di pertinenza)
         filtered = [(doc, s) for doc, s in scored if s <= DISTANCE_THRESHOLD]
 
-        # Fallback: se il filtro azzera tutto, teniamo comunque il migliore
-        # (meglio una fonte debole che nessuna fonte).
+        # Fallback CONDIZIONATO: se il filtro azzera tutto, teniamo il documento migliore
+        # SOLO se e' almeno entro FALLBACK_MAX. Se anche il migliore e' troppo lontano,
+        # NON forziamo una fonte: e' meglio "nessun documento pertinente" che un documento
+        # fuori tema (era la causa di fonti spurie, es. reti di bordo in un post su una moto).
         if not filtered:
-            filtered = [scored[0]]
+            best_doc, best_dist = scored[0]
+            if best_dist <= FALLBACK_MAX:
+                filtered = [(best_doc, best_dist)]
+            else:
+                if _cfg.debug:
+                    print(f"[DIAG RAG] miglior distanza {best_dist:.3f} > fallback {FALLBACK_MAX}: nessuna fonte.")
+                return "Nessun documento locale pertinente trovato per questo tema."
 
         # Includiamo il nome del file e la distanza per la tracciabilita'
         parts = []

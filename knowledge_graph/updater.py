@@ -20,10 +20,25 @@ def update_kg_data(
     seo_score: Optional[float] = None,
     cover_image: str = "",
 ) -> str:
-    """Aggiorna (incrementalmente) il Knowledge Graph con un articolo approvato."""
+    """Aggiorna (incrementalmente) il Knowledge Graph con un articolo approvato.
+
+    Il topic in ingresso e' gia' una chiave canonica (vedi canonical_topic). Prima di
+    salvare, lo risolviamo SEMANTICAMENTE verso un topic esistente: se nel KG c'e' gia'
+    un soggetto equivalente (es. "giulia quadrifoglio" vs "alfa romeo giulia quadrifoglio"),
+    agganciamo QUELLO invece di creare un nodo quasi-duplicato. Cosi' il grafo non si
+    frammenta e la gap-analysis resta affidabile.
+    """
+    # Risoluzione semantica del topic verso uno gia' esistente (se abbastanza simile).
+    try:
+        from .queries import resolve_topic
+        topic = resolve_topic(topic)
+    except Exception:
+        # Se la risoluzione fallisce, usiamo il topic canonico cosi' com'e'.
+        topic = (topic or "").lower().strip()
+
     query = """
     // 1. Crea/Trova Topic e Post (con timestamp alla creazione)
-    MERGE (t:Topic {name: toLower($topic)})
+    MERGE (t:Topic {name: $topic})
     MERGE (p:Post {title: toLower($post_title)})
     ON CREATE SET p.category = $category, p.created_at = datetime(), p.content = $content,
                   p.seo_score = $seo_score, p.cover_image = $cover_image

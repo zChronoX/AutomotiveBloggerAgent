@@ -49,9 +49,19 @@ class ResearchBrief(BaseModel):
     )
 
 
-# ============================================================
-# SCHEMI DI PIANIFICAZIONE (requisito "Planning")
-# ============================================================
+class KGExtraction(BaseModel):
+    """
+    Estrazione strutturata di conoscenza da un post approvato, per arricchire il KG
+    con i 'key claims' e le 'relationships between topics' richiesti dalle specifiche.
+    """
+    key_claims: list[str] = Field(
+        default_factory=list,
+        description="2-4 affermazioni fattuali chiave estratte dall'articolo (frasi brevi e autonome)."
+    )
+    related_topics: list[str] = Field(
+        default_factory=list,
+        description="2-3 argomenti brevi correlati (1-3 parole), per collegare il post ad altri nel blog."
+    )
 class PostPlan(BaseModel):
     """Pianificazione di un singolo post del blog."""
     topic: str = Field(description="L'argomento principale del post")

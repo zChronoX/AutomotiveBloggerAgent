@@ -49,6 +49,38 @@ def _get_mcp_client() -> MultiServerMCPClient:
     return _client
 
 
+def _extract_text(result) -> str:
+    """
+    Estrae il testo pulito dalla risposta del tool MCP. langchain-mcp-adapters puo'
+    restituire: una stringa gia' pronta, oppure una lista di blocchi tipo
+    [{'type': 'text', 'text': '...'}], oppure una tupla (content, artifact). Qui
+    normalizziamo tutti i casi a testo semplice, evitando che tag e '\\n' letterali
+    finiscano nell'output (com'era con un str() grezzo sulla struttura).
+    """
+    if result is None:
+        return ""
+    if isinstance(result, tuple) and result:
+        result = result[0]
+    if isinstance(result, str):
+        return result
+    if isinstance(result, list):
+        parts = []
+        for block in result:
+            if isinstance(block, dict):
+                parts.append(block.get("text", "") or block.get("content", "") or "")
+            elif isinstance(block, str):
+                parts.append(block)
+            else:
+                parts.append(getattr(block, "text", "") or "")
+        return "\n".join(p for p in parts if p)
+    if hasattr(result, "text"):
+        return result.text or ""
+    if hasattr(result, "content"):
+        c = result.content
+        return c if isinstance(c, str) else _extract_text(c)
+    return str(result)
+
+
 async def _run_mcp_search(query: str) -> str:
     """Ottiene i tool dal server MCP e invoca 'search_and_summarize' (async)."""
     client = _get_mcp_client()
@@ -57,7 +89,8 @@ async def _run_mcp_search(query: str) -> str:
     if search_tool is None:
         return "Il server MCP non espone il tool 'search_and_summarize'."
     result = await search_tool.ainvoke({"query": query})
-    return str(result) if result else "Il server MCP non ha restituito alcun testo."
+    text = _extract_text(result).strip()
+    return text if text else "Il server MCP non ha restituito alcun testo."
 
 
 def _run_in_dedicated_loop(query: str) -> str:

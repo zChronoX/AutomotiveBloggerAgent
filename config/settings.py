@@ -52,7 +52,7 @@ class Configuration:
     # e una conversazione ReAct lunga -> il modello "vede" meno e sceglie peggio i tool.
     # Granite supporta contesti ampi: 32768 da' margine abbondante. Verificato sperimentalmente
     # che un contesto adeguato migliora nettamente la scelta dei tool.
-    model_num_ctx: int = 16384
+    model_num_ctx: int = 22528
 
     # Contesto SEPARATO per il modello di stesura (Ministral 8B). La stesura riceve un input
     # contenuto (topic + fonti + linee guida), non l'intera cronologia ReAct con tutti i tool,
@@ -60,13 +60,39 @@ class Configuration:
     # la VRAM (spillover in RAM = molto lento). 8192 e' ampiamente sufficiente per un articolo.
     draft_num_ctx: int = 16384
 
+    # Tetto di GUARDIA sui token generati dalla stesura (num_predict). Serve a fermare il
+    # modello se entra in un loop ripetitivo/allucinatorio, evitando che scriva all'infinito
+    # riempiendo il context. Un post normale e' ~3000-4500 token, quindi 8192 lascia ampio
+    # margine senza mai tagliare un articolo legittimo. Solo sulla stesura: brain e riassuntore
+    # restano col default illimitato (i loro output sono naturalmente brevi).
+    # Configurabile da .env (DRAFT_NUM_PREDICT). -1 = nessun limite.
+    draft_num_predict: int = int(os.environ.get("DRAFT_NUM_PREDICT", "8192"))
+
+    # --- RAG: soglia di distanza e numero di candidati ---
+    # DISTANCE_THRESHOLD: un chunk locale viene incluso solo se la sua distanza dalla query
+    # e' <= soglia. Tarata su dati reali (test_rag_threshold.py): i documenti PERTINENTI piu'
+    # lontani osservati (reti di bordo) stavano a ~1.065, quindi 1.10 li tiene; i NON pertinenti
+    # piu' vicini (Ducati) stavano a ~1.216, quindi 1.10 li scarta.
+    # FALLBACK_MAX: quando il filtro a soglia scarta TUTTO, invece di reinfilare a forza il
+    # documento meno lontano (che causava fonti spurie, es. reti Ethernet in un post su una moto),
+    # lo teniamo SOLO se almeno sotto questa soglia piu' permissiva; oltre, restituiamo "nessun
+    # documento pertinente" (meglio nessuna fonte che una sbagliata).
+    # Entrambe configurabili da .env (RAG_DISTANCE_THRESHOLD, RAG_FALLBACK_MAX, RAG_TOP_K).
+    rag_distance_threshold: float = float(os.environ.get("RAG_DISTANCE_THRESHOLD", "1.10"))
+    rag_fallback_max: float = float(os.environ.get("RAG_FALLBACK_MAX", "1.20"))
+    rag_top_k: int = int(os.environ.get("RAG_TOP_K", "5"))
+
     # --- Modello RIASSUNTORE del server MCP di ricerca (mcp_search_server.py) ---
     # E' un modello SEPARATO dal modello del grafo: legge molte pagine web (Tavily)
     # e ne produce un riassunto tecnico denso. Usa una context ampia (num_ctx) per
     # leggere piu' contenuto possibile; temperatura bassa per un riassunto fedele.
     # NOTA: su GPU con poca VRAM (es. 8GB) num_ctx alto puo' causare spillover in RAM
     # (piu' lento) o OOM: e' un valore SPERIMENTALE da tarare sulla propria macchina.
-    summarizer_model_name: str = "phi4-mini:latest"
+    # RIASSUNTORE: ora e' lo STESSO modello del brain (Ministral). Il confronto su 4 testi
+    # ha mostrato che Ministral riassume con pari/maggiore fedelta' ai dati ed e' piu' veloce
+    # di Phi4-Mini; usandolo per la sintesi NON c'e' piu' swap di modelli in VRAM (il modello
+    # resta caldo). Tenuto come campo separato per poterlo disaccoppiare in futuro se serve.
+    summarizer_model_name: str = "ministral-3:3b"
     summarizer_temperature: float = 0.2
     summarizer_num_ctx: int = 22528
 

@@ -107,22 +107,35 @@ Scrivi solo il riassunto tecnico:
 # PROMPT PER IL TOOL DI COMPARAZIONE VEICOLI
 # ==========================================
 
-# 1. Prompt per Phi-4 (Ricerca e Sintesi)
-PHI4_VEHICLE_RESEARCH_PROMPT = """Sei un analista dati specializzato nel settore automotive.
-Il tuo obiettivo è leggere i dati grezzi estratti dal web e compilare un profilo tecnico denso e puramente fattuale del veicolo richiesto.
+# 1. Prompt per il Ricercatore (Ministral): sintesi fattuale COMPATTA
+# IMPORTANTE: l'output di questo prompt diventa l'input del giudice Llama 3.2 fine-tuned,
+# che e' stato addestrato su profili BREVI (~150-200 token per veicolo, finestra max 2048).
+# Se il profilo e' troppo lungo/verboso, il giudice va fuori distribuzione e fallisce
+# (genera solo il titolo). Quindi qui imponiamo un profilo SECCO: un solo paragrafo,
+# niente Markdown, niente sezioni/elenchi, solo i dati chiave in forma discorsiva breve.
+VEHICLE_RESEARCH_PROMPT = """Sei un analista dati del settore automotive.
+Dai dati grezzi qui sotto, scrivi un profilo tecnico BREVE e FATTUALE del veicolo richiesto.
 
 VEICOLO RICHIESTO: {query_base}
 
 REGOLE RIGIDE:
-1. Ignora qualsiasi testo promozionale, pubblicitario o non correlato al veicolo.
-2. Estrai esclusivamente numeri e fatti dimostrabili (CV, kW, dimensioni, consumi dichiarati e reali, tempi di ricarica, difetti riportati, stelle Euro NCAP).
-3. Non usare aggettivi enfatici.
-4. Se un dato non è presente nel testo grezzo, non inventarlo.
+1. UN SOLO PARAGRAFO discorsivo, MASSIMO 60-80 parole. NON usare titoli, sezioni, elenchi
+   puntati, simboli Markdown (#, *, -) o sotto-paragrafi: solo testo discorsivo continuo.
+2. Includi solo i dati chiave essenziali: motore e potenza (CV), consumi, prezzo, sicurezza
+   (stelle Euro NCAP), dotazione principale. Tralascia tutto il resto.
+3. Estrai solo numeri e fatti presenti nel testo grezzo. Se un dato manca, ometterlo
+   (NON scrivere "non disponibile", NON inventare).
+4. Niente aggettivi enfatici, niente note, niente criticita' o sezioni aggiuntive.
+
+Esempio del livello di sintesi richiesto:
+"Motore 1.0 3 cilindri mild-hybrid da 70 CV. Consumo medio dichiarato 4.6 l/100km. Prezzo da
+17.500 EUR. 4 stelle Euro NCAP, frenata automatica assente nella base. Infotainment 7 pollici
+con Apple CarPlay e clima manuale."
 
 TESTO GREZZO RECUPERATO:
 {testo_grezzo}
 
-Scrivi il profilo tecnico in modo conciso e strutturato:"""
+Scrivi il profilo tecnico breve (un paragrafo, max 60-80 parole):"""
 
 # 2. Prompt per LLaMA 3.2 1B (Il Giudice Fine-Tuned)
 TINY_JUDGE_SYSTEM_PROMPT = """Sei un ingegnere specializzato in comparazioni automobilistiche e motociclistiche.

@@ -10,6 +10,7 @@ Codice estratto da kg_tool.py (sezione FUNZIONI CORE).
 """
 
 from .client import run_read, fmt_date
+from .semantic import best_semantic_match
 
 # @traceable rende le query KG visibili nella waterfall. Import difensivo no-op
 # se langsmith non e' disponibile.
@@ -24,6 +25,31 @@ except Exception:
         return _wrap
 
 
+def _all_topic_names() -> list[str]:
+    """Tutti i nomi di topic presenti nel KG (per il matching semantico)."""
+    try:
+        rows = run_read("MATCH (t:Topic) RETURN t.name AS name")
+        return [r["name"] for r in rows if r.get("name")]
+    except Exception:
+        return []
+
+
+def resolve_topic(topic: str) -> str:
+    """
+    Risolve il topic cercato verso un topic ESISTENTE nel KG tramite similarita'
+    SEMANTICA (embedding). Se trova un topic gia' presente abbastanza simile,
+    restituisce quel nome canonico (cosi' le query agganciano i post esistenti
+    anche se il soggetto e' formulato diversamente). Altrimenti restituisce il
+    topic normalizzato originale (minuscolo), trattandolo come nuovo.
+    """
+    if not topic:
+        return ""
+    key = topic.lower().strip()
+    candidates = _all_topic_names()
+    match, score = best_semantic_match(key, candidates)
+    return match if match else key
+
+
 @traceable(run_type="retriever", name="kg_topic_history")
 def kg_topic_history(topic: str) -> str:
     """
@@ -31,16 +57,17 @@ def kg_topic_history(topic: str) -> str:
     Usata in: fase di pianificazione (evitare doppioni) e drafting (coerenza).
     """
     posts_q = """
-    MATCH (t:Topic {name: toLower($topic)})<-[:COVERS_TOPIC]-(p:Post)
+    MATCH (t:Topic {name: $topic})<-[:COVERS_TOPIC]-(p:Post)
     RETURN p.title AS title, p.category AS category, p.created_at AS created_at
     ORDER BY p.created_at DESC
     """
     related_q = """
-    MATCH (t:Topic {name: toLower($topic)})-[:RELATED_TO]-(rt:Topic)
+    MATCH (t:Topic {name: $topic})-[:RELATED_TO]-(rt:Topic)
     RETURN DISTINCT rt.name AS related
     """
     try:
-        posts = run_read(posts_q, topic=topic)
+        resolved = resolve_topic(topic)
+        posts = run_read(posts_q, topic=resolved)
         if not posts:
             return f"L'argomento '{topic}' non e' mai stato trattato nel blog (e' un possibile gap di copertura)."
 
@@ -48,7 +75,7 @@ def kg_topic_history(topic: str) -> str:
         for r in posts:
             lines.append(f"- {r['title']} (Categoria: {r['category']}, del {fmt_date(r['created_at'])})")
 
-        related = [r["related"] for r in run_read(related_q, topic=topic) if r["related"]]
+        related = [r["related"] for r in run_read(related_q, topic=resolved) if r["related"]]
         if related:
             lines.append("Topic correlati gia' presenti nel grafo: " + ", ".join(related))
         return "\n".join(lines)
@@ -95,7 +122,7 @@ def kg_topic_context(topic: str) -> str:
     topic correlati. E' anche il pezzo di KG che alimenta il K-RAG.
     """
     query = """
-    MATCH (t:Topic {name: toLower($topic)})
+    MATCH (t:Topic {name: $topic})
     OPTIONAL MATCH (t)<-[:COVERS_TOPIC]-(p:Post)
     OPTIONAL MATCH (p)-[:ASSERTS]->(c:Claim)
     OPTIONAL MATCH (p)-[:BASED_ON]->(s:Source)
@@ -106,7 +133,8 @@ def kg_topic_context(topic: str) -> str:
            collect(DISTINCT rt.name) AS related
     """
     try:
-        rows = run_read(query, topic=topic)
+        resolved = resolve_topic(topic)
+        rows = run_read(query, topic=resolved)
         if not rows:
             return f"Nessun contesto nel KG per '{topic}': e' un argomento nuovo, nessun vincolo di coerenza."
 
@@ -142,11 +170,12 @@ def kg_related_topics(topic: str) -> list[str]:
     "use the Knowledge Graph to expand or refine retrieval queries").
     """
     query = """
-    MATCH (t:Topic {name: toLower($topic)})-[:RELATED_TO]-(rt:Topic)
+    MATCH (t:Topic {name: $topic})-[:RELATED_TO]-(rt:Topic)
     RETURN DISTINCT rt.name AS related
     """
     try:
-        rows = run_read(query, topic=topic)
+        resolved = resolve_topic(topic)
+        rows = run_read(query, topic=resolved)
         return [r["related"] for r in rows if r["related"]]
     except Exception:
         return []

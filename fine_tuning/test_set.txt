@@ -1,0 +1,339 @@
+**CASO 1 (Berline Premium)**
+
+INPUT:
+<veicolo_1>
+Marca: Alfa Romeo
+Modello: Giulia 2.2 Turbodiesel
+Dati estratti: Motore 2.2 turbodiesel da 210 CV. Consumo medio di 5.5 l/100km. Prezzo da 55.000 EUR. Sicurezza a 5 stelle Euro NCAP con ADAS di base. Infotainment da 8.8 pollici e climatizzatore automatico bizona.
+</veicolo_1>
+<veicolo_2>
+Marca: BMW
+Modello: 320d xDrive
+Dati estratti: Motore 2.0 turbodiesel mild-hybrid da 190 CV. Consumo medio di 4.8 l/100km. Prezzo da 56.000 EUR. Sicurezza a 5 stelle Euro NCAP con ADAS di livello 2. Display curvo da 14.9 pollici e climatizzatore automatico trizona.
+</veicolo_2>
+Genera la comparazione seguendo le istruzioni del sistema.
+
+RIFERIMENTO:
+
+### Analisi Comparativa: Alfa Romeo Giulia 2.2 Turbodiesel vs BMW 320d xDrive
+
+1. Prestazioni e Motore
+Vincitore: Alfa Romeo Giulia 2.2 Turbodiesel
+Motivazione: Il propulsore italiano offre 20 CV in più rispetto al motore bavarese, assicurando una maggiore prontezza e dinamismo alla guida.
+2. Consumi e Costi Operativi
+Vincitore: BMW 320d xDrive
+Motivazione: Grazie al sistema mild-hybrid, la BMW registra un consumo nettamente inferiore (4.8 l/100km contro 5.5 l/100km), che compensa il listino iniziale di poco superiore.
+3. Sicurezza e Affidabilità
+Vincitore: BMW 320d xDrive
+Motivazione: Entrambe hanno ottenuto le 5 stelle Euro NCAP, ma la vettura tedesca si impone per l'offerta di ADAS di livello 2, più avanzati rispetto al pacchetto base dell'Alfa Romeo.
+4. Comfort e Tecnologia
+Vincitore: BMW 320d xDrive
+Motivazione: L'immenso display curvo da 14.9 pollici e il climatizzatore trizona offrono un comfort tecnologico e climatico irraggiungibile dal sistema da 8.8 pollici della Giulia.
+Verdetto Finale
+L'Alfa Romeo Giulia è la berlina perfetta per chi predilige il coinvolgimento alla guida e la pura potenza meccanica. La BMW 320d xDrive è dedicata a chi viaggia spesso in autostrada, privilegiando l'efficienza dei consumi, la sicurezza attiva e la tecnologia di bordo più all'avanguardia.
+
+**CASO 2 (SUV Compatti Economici)**
+
+INPUT:
+<veicolo_1>
+Marca: Dacia
+Modello: Duster 1.3 TCe
+Dati estratti: Motore 1.3 turbo benzina da 150 CV. Consumo medio di 6.2 l/100km. Prezzo da 25.000 EUR. Sicurezza valutata a 3 stelle Euro NCAP con limitati sistemi di assistenza. Infotainment Media Nav da 8 pollici e climatizzatore automatico.
+</veicolo_1>
+<veicolo_2>
+Marca: Suzuki
+Modello: Vitara 1.4 Hybrid
+Dati estratti: Motore 1.4 mild-hybrid da 129 CV. Consumo medio di 5.4 l/100km. Prezzo da 25.500 EUR. Sicurezza valutata a 5 stelle Euro NCAP con frenata automatica di serie. Infotainment da 7 pollici touch e climatizzatore automatico.
+</veicolo_2>
+Genera la comparazione seguendo le istruzioni del sistema.
+
+RIFERIMENTO:
+
+### Analisi Comparativa: Dacia Duster 1.3 TCe vs Suzuki Vitara 1.4 Hybrid
+
+1. Prestazioni e Motore
+Vincitore: Dacia Duster 1.3 TCe
+Motivazione: Con 150 CV a disposizione, la Dacia offre una potenza superiore rispetto ai 129 CV della Vitara, garantendo accelerazioni più vivaci.
+2. Consumi e Costi Operativi
+Vincitore: Suzuki Vitara 1.4 Hybrid
+Motivazione: La tecnologia mild-hybrid permette alla Suzuki di abbattere i consumi (5.4 contro 6.2 l/100km), offrendo un risparmio alla pompa che bilancia ampiamente la minima differenza di prezzo iniziale.
+3. Sicurezza e Affidabilità
+Vincitore: Suzuki Vitara 1.4 Hybrid
+Motivazione: La Suzuki stravince grazie alle 5 stelle Euro NCAP e alla dotazione di sicurezza attiva di serie, distaccando nettamente le sole 3 stelle della Dacia.
+4. Comfort e Tecnologia
+Vincitore: Dacia Duster 1.3 TCe
+Motivazione: Il SUV del gruppo Renault offre un display dell'infotainment da 8 pollici, più grande e appagante rispetto a quello da 7 pollici montato sulla rivale.
+Verdetto Finale
+La Dacia Duster 1.3 TCe è ideale per chi cerca un veicolo robusto con un motore scattante e un sistema multimediale intuitivo e spazioso. La Suzuki Vitara 1.4 Hybrid si rivolge a chi fa della sicurezza e del risparmio di carburante le proprie priorità assolute, accettando qualche cavallo in meno.
+
+**CASO 3 (SUV Grandi Elettrici)**
+
+INPUT:
+<veicolo_1>
+Marca: Volvo
+Modello: EX90
+Dati estratti: Motori elettrici per un totale di 408 CV. Consumo medio di 20.9 kWh/100km. Prezzo base di 85.000 EUR. Sicurezza a 5 stelle Euro NCAP con innovativo sensore Lidar di serie. Display verticale da 14.5 pollici con Google Automotive e clima quadrizona.
+</veicolo_1>
+<veicolo_2>
+Marca: Kia
+Modello: EV9
+Dati estratti: Motori elettrici per un totale di 384 CV. Consumo medio di 22.8 kWh/100km. Prezzo base di 81.000 EUR. Sicurezza a 5 stelle Euro NCAP con ADAS completi. Triplo schermo panoramico e climatizzatore multizona.
+</veicolo_2>
+Genera la comparazione seguendo le istruzioni del sistema.
+
+RIFERIMENTO:
+
+### Analisi Comparativa: Volvo EX90 vs Kia EV9
+
+1. Prestazioni e Motore
+Vincitore: Volvo EX90
+Motivazione: Il SUV svedese eroga 408 CV, superando di 24 CV il powertrain della Kia e offrendo una spinta maggiore per muovere l'imponente mole del veicolo.
+2. Consumi e Costi Operativi
+Vincitore: Pareggio
+Motivazione: Se da un lato la Kia costa 4.000 EUR in meno al momento dell'acquisto, dall'altro la Volvo risulta significativamente più efficiente (20.9 contro 22.8 kWh/100km), pareggiando i costi nel lungo termine.
+3. Sicurezza e Affidabilità
+Vincitore: Volvo EX90
+Motivazione: Pur essendo entrambe al vertice dei crash test europei, la Volvo fa la differenza integrando il sofisticato sensore Lidar di serie, che offre una percezione predittiva dell'ambiente impareggiabile.
+4. Comfort e Tecnologia
+Vincitore: Pareggio
+Motivazione: La Kia affascina con il suo triplo schermo panoramico ad alta tecnologia, mentre la Volvo risponde con un ecosistema Google perfetto sul suo display da 14.5 pollici e un raffinato clima quadrizona.
+Verdetto Finale
+La Volvo EX90 è il manifesto per chi esige il massimo storico in fatto di sicurezza attiva e passiva senza badare a spese per la propria famiglia. La Kia EV9 è il maxi SUV elettrico per famiglie numerose che vogliono viaggiare circondate da schermi futuristici a un prezzo iniziale più concorrenziale.
+
+**CASO 4 (Spider)**
+
+INPUT:
+<veicolo_1>
+Marca: BMW
+Modello: Z4 sDrive20i
+Dati estratti: Motore 2.0 turbo benzina da 197 CV. Consumo medio di 7.1 l/100km. Prezzo da 55.000 EUR. Sicurezza elevata grazie ad ADAS attivi di serie (Euro NCAP non testata). Sistema iDrive con display da 10.25 pollici e clima automatico bizona.
+</veicolo_1>
+<veicolo_2>
+Marca: Porsche
+Modello: 718 Boxster
+Dati estratti: Motore 2.0 boxer turbo da 300 CV. Consumo medio di 8.9 l/100km. Prezzo da 65.000 EUR. Sicurezza basata sulla dinamica del telaio, ADAS disponibili solo come optional. Infotainment PCM da 7 pollici e climatizzatore manuale.
+</veicolo_2>
+Genera la comparazione seguendo le istruzioni del sistema.
+
+RIFERIMENTO:
+
+### Analisi Comparativa: BMW Z4 sDrive20i vs Porsche 718 Boxster
+
+1. Prestazioni e Motore
+Vincitore: Porsche 718 Boxster
+Motivazione: Il motore boxer Porsche sprigiona ben 300 CV, surclassando i 197 CV della BMW e fornendo prestazioni dinamiche di tutt'altro livello.
+2. Consumi e Costi Operativi
+Vincitore: BMW Z4 sDrive20i
+Motivazione: La Z4 vince a mani basse sul fronte economico, con consumi notevolmente più bassi (7.1 contro 8.9 l/100km) e un listino inferiore di ben 10.000 EUR.
+3. Sicurezza e Affidabilità
+Vincitore: BMW Z4 sDrive20i
+Motivazione: BMW fornisce di serie sistemi ADAS fondamentali per l'uso stradale quotidiano, mentre Porsche li relega alla lista degli optional a pagamento per non appesantire la vettura.
+4. Comfort e Tecnologia
+Vincitore: BMW Z4 sDrive20i
+Motivazione: Lo schermo da 10.25 pollici del sistema iDrive e il clima bizona rendono l'abitacolo della BMW molto più confortevole e moderno rispetto alla plancia con display da 7 pollici della Boxster.
+Verdetto Finale
+La BMW Z4 è la spider ideale per chi cerca l'open-air quotidiano, godendo di tecnologie moderne e costi di gestione ragionevoli. La Porsche 718 Boxster è la sportiva pura per la domenica, che sacrifica il comfort e l'efficienza in favore di prestazioni esaltanti.
+
+**CASO 5 (Citycar Elettriche)**
+
+INPUT:
+<veicolo_1>
+Marca: Renault
+Modello: Twingo E-Tech
+Dati estratti: Motore elettrico da 82 CV. Consumo medio di 16.0 kWh/100km. Prezzo da 24.000 EUR. Sicurezza valutata a 4 stelle Euro NCAP. Infotainment Easy Link da 7 pollici e climatizzatore automatico.
+</veicolo_1>
+<veicolo_2>
+Marca: Smart
+Modello: EQ fortwo
+Dati estratti: Motore elettrico da 82 CV. Consumo medio di 15.7 kWh/100km. Prezzo da 25.000 EUR. Sicurezza valutata a 4 stelle Euro NCAP. Smart Media System da 8 pollici e climatizzatore automatico.
+</veicolo_2>
+Genera la comparazione seguendo le istruzioni del sistema.
+
+RIFERIMENTO:
+
+### Analisi Comparativa: Renault Twingo E-Tech vs Smart EQ fortwo
+
+1. Prestazioni e Motore
+Vincitore: Pareggio
+Motivazione: Le due citycar sfruttano il medesimo propulsore elettrico da 82 CV, garantendo le stesse prestazioni brillanti negli scatti da semaforo a semaforo in città.
+2. Consumi e Costi Operativi
+Vincitore: Pareggio
+Motivazione: La Smart consuma leggermente meno (15.7 contro 16.0 kWh/100km), ma la Twingo è più conveniente di 1.000 EUR al momento dell'acquisto, bilanciando perfettamente le voci di spesa economica.
+3. Sicurezza e Affidabilità
+Vincitore: Pareggio
+Motivazione: Nessuna delle due vetture si impone sull'altra in questa categoria, avendo entrambe ottenuto un solido punteggio di 4 stelle Euro NCAP.
+4. Comfort e Tecnologia
+Vincitore: Smart EQ fortwo
+Motivazione: Nonostante la parità climatica, la Smart offre uno schermo del sistema multimediale più grande (8 pollici contro 7), che facilita la lettura e la navigazione nel traffico.
+Verdetto Finale
+La Renault Twingo E-Tech è l'auto elettrica urbana per chi necessita di estrema praticità a quattro posti contenendo il prezzo d'attacco. La Smart EQ fortwo è il veicolo definitivo per chi deve parcheggiare ovunque, sacrificando i posti posteriori per un design iconico e uno schermo migliore.
+
+**CASO 6 (SUV Coupé Elettrici Premium)**
+
+INPUT:
+<veicolo_1>
+Marca: Maserati
+Modello: Grecale Folgore
+Dati estratti: Due motori elettrici per un totale di 550 CV. Consumo medio di 24.0 kWh/100km. Prezzo da 125.000 EUR. Sicurezza garantita da telaio irrigidito e ADAS di livello 2. Abitacolo di lusso con triplo schermo digitale e clima trizona.
+</veicolo_1>
+<veicolo_2>
+Marca: Porsche
+Modello: Macan Electric
+Dati estratti: Due motori elettrici per un totale di 408 CV. Consumo medio di 19.8 kWh/100km. Prezzo da 88.000 EUR. Sicurezza di alto livello con ADAS completi. Plancia con display curvo, head-up display e clima bizona.
+</veicolo_2>
+Genera la comparazione seguendo le istruzioni del sistema.
+
+RIFERIMENTO:
+
+### Analisi Comparativa: Maserati Grecale Folgore vs Porsche Macan Electric
+
+1. Prestazioni e Motore
+Vincitore: Maserati Grecale Folgore
+Motivazione: Il powertrain Maserati esprime ben 550 CV, staccando in maniera incolmabile i 408 CV della Porsche e garantendo prestazioni brucianti.
+2. Consumi e Costi Operativi
+Vincitore: Porsche Macan Electric
+Motivazione: La Porsche trionfa sotto il profilo economico e dell'efficienza, consumando molta meno energia (19.8 contro 24.0 kWh/100km) e facendo risparmiare l'incredibile cifra di 37.000 EUR sull'acquisto.
+3. Sicurezza e Affidabilità
+Vincitore: Pareggio
+Motivazione: Entrambi i prestigiosi SUV offrono pacchetti di assistenza alla guida di livello 2 avanzati e telai appositamente studiati per sopportare le elevate potenze elettriche.
+4. Comfort e Tecnologia
+Vincitore: Pareggio
+Motivazione: L'opulenza del triplo schermo e del clima trizona Maserati si scontra alla pari con l'incredibile interfaccia tecnologica della Macan, che vanta a suo favore un avanzato head-up display.
+Verdetto Finale
+La Maserati Grecale Folgore è dedicata a chi cerca un'elettrica dalle prestazioni stratosferiche e dal fascino elitario tipico del tridente. La Porsche Macan Electric è un SUV dinamico e intelligente, che bilancia una superba efficienza aerodinamica a un prezzo molto più razionale per il segmento di lusso.
+
+**CASO 7 (Moto Naked Medie)**
+
+INPUT:
+<veicolo_1>
+Marca: Yamaha
+Modello: MT-07
+Dati estratti: Motore bicilindrico CP2 da 689cc, 73 CV. Consumo medio di 4.2 l/100km. Prezzo da 7.999 EUR. Sicurezza base con ABS a doppio canale. Strumentazione TFT da 5 pollici con connettività per lo smartphone.
+</veicolo_1>
+<veicolo_2>
+Marca: Kawasaki
+Modello: Z650
+Dati estratti: Motore bicilindrico da 649cc, 68 CV. Consumo medio di 4.3 l/100km. Prezzo da 7.590 EUR. Sicurezza con ABS e sistema di controllo di trazione KTRC di serie. Display TFT a colori da 4.3 pollici.
+</veicolo_2>
+Genera la comparazione seguendo le istruzioni del sistema.
+
+RIFERIMENTO:
+
+### Analisi Comparativa: Yamaha MT-07 vs Kawasaki Z650
+
+1. Prestazioni e Motore
+Vincitore: Yamaha MT-07
+Motivazione: Il motore CP2 della Yamaha eroga 5 CV in più grazie alla cilindrata superiore, garantendo una schiena più corposa ai medi regimi.
+2. Consumi e Costi Operativi
+Vincitore: Pareggio
+Motivazione: La Kawasaki ha un prezzo di listino più basso di 400 EUR, ma la Yamaha consuma leggermente meno benzina (4.2 contro 4.3 l/100km), bilanciando così le spese sul lungo periodo.
+3. Sicurezza e Affidabilità
+Vincitore: Kawasaki Z650
+Motivazione: L'inclusione del controllo di trazione KTRC di serie pone la Kawasaki un netto gradino sopra la rivale, che è totalmente sprovvista di tale ausilio elettronico alla guida.
+4. Comfort e Tecnologia
+Vincitore: Yamaha MT-07
+Motivazione: Lo schermo TFT da 5 pollici della Yamaha risulta più ampio, moderno e leggibile rispetto al display più contenuto da 4.3 pollici della Z650.
+Verdetto Finale
+La Yamaha MT-07 è la regina del divertimento nel misto per chi cerca un motore esuberante e non ha bisogno di aiuti elettronici avanzati. La Kawasaki Z650 si distingue come la moto perfetta per i neofiti, offrendo maggior sicurezza in accelerazione grazie al controllo di trazione a un prezzo competitivo.
+
+**CASO 8 (Moto Maxi Enduro Medie)**
+
+INPUT:
+<veicolo_1>
+Marca: Ducati
+Modello: DesertX
+Dati estratti: Motore bicilindrico a L da 937cc, 110 CV. Consumo medio di 5.6 l/100km. Prezzo da 17.390 EUR. Sicurezza garantita da IMU a 6 assi con Cornering ABS. Cruscotto TFT da 5 pollici disposto verticalmente con 6 riding mode.
+</veicolo_1>
+<veicolo_2>
+Marca: KTM
+Modello: 890 Adventure R
+Dati estratti: Motore bicilindrico parallelo da 889cc, 105 CV. Consumo medio di 4.5 l/100km. Prezzo da 16.690 EUR. Sicurezza con ABS Cornering specifico per l'off-road. Display TFT a colori orizzontale e sospensioni WP pluriregolabili.
+</veicolo_2>
+Genera la comparazione seguendo le istruzioni del sistema.
+
+RIFERIMENTO:
+
+### Analisi Comparativa: Ducati DesertX vs KTM 890 Adventure R
+
+1. Prestazioni e Motore
+Vincitore: Ducati DesertX
+Motivazione: Il propulsore italiano svetta offrendo 110 CV, garantendo prestazioni velocistiche superiori alla rivale KTM ferma a 105 CV sia in allungo stradale che nel superamento degli ostacoli.
+2. Consumi e Costi Operativi
+Vincitore: KTM 890 Adventure R
+Motivazione: La moto austriaca straccia la rivale con consumi molto più parchi (4.5 l/100km contro 5.6) e garantisce un risparmio sull'esborso iniziale di 700 EUR.
+3. Sicurezza e Affidabilità
+Vincitore: Pareggio
+Motivazione: Entrambe possiedono elettroniche raffinatissime con ABS cornering in grado di modulare la frenata anche in condizioni di forte inclinazione sul fuoristrada.
+4. Comfort e Tecnologia
+Vincitore: Ducati DesertX
+Motivazione: Il cruscotto verticale in stile rally unito alla disponibilità di ben 6 riding mode personalizzabili fornisce alla Ducati un'interfaccia utente superiore e più completa.
+Verdetto Finale
+La Ducati DesertX è indirizzata al motociclista che desidera linee ispirate alla Dakar, massima potenza per l'asfalto e un'elettronica da prima della classe. La KTM 890 Adventure R si conferma la compagna ideale per i fuoristradisti duri e puri, offrendo consumi ridotti e sospensioni puramente specialistiche.
+
+**CASO 9 (Moto Supersportive)**
+
+INPUT:
+<veicolo_1>
+Marca: Yamaha
+Modello: YZF-R1
+Dati estratti: Motore 4 cilindri CP4 da 998cc, 200 CV. Consumo medio di 6.8 l/100km. Prezzo da 20.699 EUR. Sicurezza estrema con piattaforma IMU a 6 assi e Slide Control. Strumentazione TFT derivata dalle corse.
+</veicolo_1>
+<veicolo_2>
+Marca: Honda
+Modello: CBR1000RR-R Fireblade
+Dati estratti: Motore 4 cilindri in linea da 1000cc, 217 CV. Consumo medio di 6.6 l/100km. Prezzo da 23.990 EUR. Sicurezza con IMU a 6 assi e alette aerodinamiche attive integrate. Display TFT a colori ad alta risoluzione.
+</veicolo_2>
+Genera la comparazione seguendo le istruzioni del sistema.
+
+RIFERIMENTO:
+
+### Analisi Comparativa: Yamaha YZF-R1 vs Honda CBR1000RR-R Fireblade
+
+1. Prestazioni e Motore
+Vincitore: Honda CBR1000RR-R Fireblade
+Motivazione: Il prodigioso propulsore in linea della Fireblade eroga 217 CV, sovrastando ampiamente i 200 CV della R1 e garantendo allunghi brutali sui lunghi rettilinei.
+2. Consumi e Costi Operativi
+Vincitore: Pareggio
+Motivazione: Sebbene la Yamaha vanti un prezzo di listino inferiore di quasi 3.300 EUR, la Honda compensa nell'utilizzo con un'efficienza termica migliore (6.6 l/100km contro 6.8).
+3. Sicurezza e Affidabilità
+Vincitore: Honda CBR1000RR-R Fireblade
+Motivazione: L'adozione di alette aerodinamiche attive integrate da parte della Honda aumenta enormemente la stabilità dell'anteriore, superando le dotazioni puramente elettroniche della rivale.
+4. Comfort e Tecnologia
+Vincitore: Pareggio
+Motivazione: Per macchine così estreme, i cruscotti TFT e le interfacce software per la regolazione minuziosa dell'elettronica in pista si equivalgono per funzionalità racing.
+Verdetto Finale
+La Yamaha YZF-R1 è perfetta per chi ama l'inconfondibile erogazione vigorosa ai bassi e il sound del motore a scoppi irregolari, limitando maggiormente l'esborso d'acquisto. La Honda CBR1000RR-R è destinata ai piloti che necessitano di una cavalleria spaventosa e delle ultime tecnologie aerodinamiche derivate dalla MotoGP.
+
+**CASO 10 (Super SUV)**
+
+INPUT:
+<veicolo_1>
+Marca: Aston Martin
+Modello: DBX707
+Dati estratti: Motore V8 biturbo da 707 CV. Consumo medio di 14.2 l/100km. Prezzo da 250.000 EUR. Sicurezza garantita da trazione integrale avanzata e ADAS completi. Infotainment touch da 10.25 pollici, finiture in pelle artigianale e clima multi-zona.
+</veicolo_1>
+<veicolo_2>
+Marca: Lamborghini
+Modello: Urus Performante
+Dati estratti: Motore V8 biturbo da 666 CV. Consumo medio di 14.1 l/100km. Prezzo da 270.000 EUR. Sicurezza con ADAS di ultima generazione e assetto sportivo ribassato. Tecnologia con doppio schermo centrale touch screen e clima automatico quadrizona.
+</veicolo_2>
+Genera la comparazione seguendo le istruzioni del sistema.
+
+RIFERIMENTO:
+
+### Analisi Comparativa: Aston Martin DBX707 vs Lamborghini Urus Performante
+
+1. Prestazioni e Motore
+Vincitore: Aston Martin DBX707
+Motivazione: Il possente V8 inglese tocca la sbalorditiva quota di 707 CV, sconfiggendo i 666 CV dell'italiana e offrendo un primato di potenza assoluta nella categoria.
+2. Consumi e Costi Operativi
+Vincitore: Aston Martin DBX707
+Motivazione: A parità di consumi dichiarati pressoché speculari, l'Aston Martin sbaraglia la concorrenza permettendo un risparmio sul prezzo di listino di ben 20.000 EUR.
+3. Sicurezza e Affidabilità
+Vincitore: Pareggio
+Motivazione: Le due ammiraglie iper-sportive tutelano la sicurezza garantendo suite ADAS complete abbinate a telai e trazioni integrali ai limiti della fisica per gestire l'enorme massa in gioco.
+4. Comfort e Tecnologia
+Vincitore: Lamborghini Urus Performante
+Motivazione: La soluzione a doppio schermo centrale della Lamborghini risulta molto più moderna, reattiva e funzionale rispetto al singolo display da 10.25 pollici montato sull'inglese.
+Verdetto Finale
+L'Aston Martin DBX707 è il super SUV per l'esteta che esige la massima potenza in rettilineo unita all'eleganza britannica, a un prezzo paradossalmente più abbordabile per la categoria. La Lamborghini Urus Performante è l'arma da cordolo totale per chi ama le linee tese e aggressive, avvolto da un abitacolo tecnologicamente ineccepibile.
