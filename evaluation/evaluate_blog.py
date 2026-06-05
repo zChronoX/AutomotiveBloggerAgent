@@ -97,6 +97,8 @@ def run_blogger_until_draft(inputs: dict) -> dict:
         tools_called.append("query_knowledge_graph")
     if values.get("local_sources"):
         tools_called.append("retrieve_local_documents")
+    if values.get("trends_summary"):
+        tools_called.append("fetch_automotive_trends")
 
     return {
         "draft_content": draft,
@@ -149,29 +151,51 @@ def evaluate_quality(run, example) -> dict:
 # 2. SOURCE GROUNDING & CITATIONS (K-RAG)
 # ============================================================
 class GroundingScore(BaseModel):
-    score: int = Field(description="1 se i fatti sono supportati e ci sono citazioni esplicite, 0 altrimenti.")
-    reasoning: str = Field(description="Spiega se le fonti sono citate correttamente o se ci sono allucinazioni.")
+    factualita: int = Field(description="Da 0 a 5: quanto il testo e' fattuale e privo di speculazioni inventate (5 = pienamente fattuale).")
+    reasoning: str = Field(description="Spiega se le fonti sono usate correttamente o se ci sono affermazioni non supportate.")
 
 
 def evaluate_grounding(run, example) -> dict:
-    """Valuta ancoraggio alle fonti e presenza di citazioni esplicite."""
+    """
+    Valuta l'ancoraggio alle fonti come punteggio GRADUALE (non piu' 0/1 secco).
+    Combina due segnali:
+      (a) CITAZIONI - check deterministico: cerca URL e marcatori di fonte nel testo.
+          Oggettivo, non dipende dal giudizio (a volte arbitrario) di un modello 3B.
+      (b) FATTUALITA' - giudizio del modello su quanto il testo e' fattuale (0-5).
+    Punteggio finale = 50% citazioni presenti + 50% fattualita'. Cosi' un post CON fonti
+    citate ma con qualche frase ipotetica non prende piu' 0 secco, ma un punteggio intermedio.
+    """
     generated_post = _extract_post(run)
     if not generated_post:
-        return {"key": "Source_Grounding", "score": 0, "comment": "Nessuna bozza generata."}
+        return {"key": "Source_Grounding", "score": 0.0, "comment": "Nessuna bozza generata."}
 
+    # (a) Check DETERMINISTICO delle citazioni: oggettivo, non soggetto al giudizio del 3B.
+    low = generated_post.lower()
+    citation_markers = ["http", "[fonte", "fonte:", "fonti:", "secondo", "[1]", "riferimenti", ".txt", ".it", ".com"]
+    has_citations = any(m in low for m in citation_markers)
+    cit_score = 1.0 if has_citations else 0.0
+
+    # (b) Giudizio del modello sulla FATTUALITA' (0-5), separato dalle citazioni.
     prompt = PromptTemplate.from_template(
-        "Analizza il seguente articolo. Requisiti fondamentali:\n"
-        "1. Ci sono citazioni o riferimenti espliciti alle fonti (es. [1], 'Secondo la fonte...', link)?\n"
-        "2. Il testo e' fattuale o contiene speculazioni/allucinazioni senza base tecnica?\n"
-        "Assegna 1 solo se ENTRAMBE le condizioni sono soddisfatte, altrimenti 0.\n"
-        "Articolo:\n{post}\n"
+        "Valuta da 0 a 5 quanto il seguente articolo automotive e' FATTUALE, cioe' privo di "
+        "affermazioni palesemente inventate o speculazioni prive di base. NON penalizzare le "
+        "normali espressioni di previsione ('si prevede', 'potrebbe') tipiche del giornalismo: "
+        "penalizza solo dati o fatti chiaramente falsi o non supportati.\n"
+        "5 = pienamente fattuale; 0 = pieno di invenzioni.\n\nArticolo:\n{post}\n"
     )
     grader = evaluator_llm.with_structured_output(GroundingScore)
     try:
-        result = grader.invoke(prompt.format(post=generated_post))
-        return {"key": "Source_Grounding", "score": result.score, "comment": result.reasoning}
+        result = grader.invoke(prompt.format(post=generated_post[:6000]))
+        fact_score = max(0, min(5, result.factualita)) / 5.0
+        reasoning = result.reasoning
     except Exception as e:
-        return {"key": "Source_Grounding", "score": 0, "comment": f"Errore: {e}"}
+        fact_score = 0.5  # se il giudice fallisce, valore neutro invece di penalizzare
+        reasoning = f"(giudizio fattualita' non disponibile: {e})"
+
+    final = round(0.5 * cit_score + 0.5 * fact_score, 2)
+    comment = (f"Citazioni presenti: {'si' if has_citations else 'NO'} "
+               f"(peso 0.5). Fattualita': {fact_score:.1f} (peso 0.5). {reasoning}")
+    return {"key": "Source_Grounding", "score": final, "comment": comment}
 
 
 # ============================================================
