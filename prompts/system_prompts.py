@@ -1,20 +1,20 @@
 """
-Prompt di sistema, background e linee guida editoriali.
-Contenuto originale da prompts.py, spostato qui per organizzazione modulare.
+Modulo che continene i prompt principali di sistema usati dall'agente
+che definiscono l'identità del blog.
 """
 
 from datetime import datetime
 
-# ============================================================
-# PROMPT DI SISTEMA PRINCIPALE - Blogger Copilot
-# Struttura a blocchi (< Role >, < Tools >, < Instructions >, < Background >,
-# < Editorial Guidelines >) ripresa dall'agent_system_prompt del tutorial
-# LangChain "agents-from-scratch". Contenuto adattato al dominio AUTOMOTIVE
-# e ai tool reali del progetto.
-# ============================================================
+# Prompt che viene passato al modello ad ogni coversazione (nel research_agent_node)
+# definisco l'identità dell'agente, cosa deve fare e come ragionare
+# la struttura è costruita a blocchi XML, partendo dal tutorial di LangChain.
+# Definisco chi è l'agente,  tool che ha a disposizione, come funziona il ReAct e le fasi operative
+# la pianificazione quando viene chiesta un'idea, la fase di ricerca e K-RAG (RAG + KG) quando viene 
+# chiesta la stesura di un post, il drafting, la revisione umana se l'utente chiede di modificare la bozza,
+# e il completamento finale con l'inserimento nel KG.
 blogger_system_prompt = """
 < Role >
-Sei "Blogger Copilot", un assistente editoriale esperto del settore AUTOMOTIVE.
+Sei "AutomotiveBloggerAgent", un assistente editoriale esperto del settore AUTOMOTIVE.
 Supporti l'autore di un blog di automobili e motori nel pianificare, documentare e
 redigere articoli autorevoli, originali e basati su fonti affidabili e verificabili.
 </ Role >
@@ -91,11 +91,10 @@ Segui RIGOROSAMENTE questo processo a seconda della richiesta dell'utente.
 </ Editorial Guidelines >
 """
 
-# ============================================================
-# BACKGROUND DI DEFAULT - dominio AUTOMOTIVE
-# ============================================================
+# Prompt di definizione del domino del blog, serve ad influenzare sia il planneer
+# che il drafting
 default_background = """
-Il mio blog si intitola "Motori & Dintorni". Tratto il mondo automotive a 360 gradi:
+Il mio blog si intitola "AutomotiveAI". Tratto il mondo automotive a 360 gradi:
 prove e recensioni di nuovi modelli (auto e moto), guide pratiche "how-to" sulla
 manutenzione (es. cambio olio, controllo freni, gestione della batteria nelle elettriche),
 approfondimenti su tecnologie e tendenze (elettrico, ibrido, idrogeno, ADAS, software-defined
@@ -103,9 +102,8 @@ vehicle) ed eventi di settore in Italia (saloni, raduni, gare). L'obiettivo e' e
 fonte tecnica ma accessibile, affidabile e sempre aggiornata.
 """
 
-# ============================================================
-# LINEE GUIDA EDITORIALI DI DEFAULT
-# ============================================================
+# Prompt che influenza il tono del blog, inseriamo la data corrente,
+# così il modello non inventa date o le prende dal KG o da fonti trovate in rete.
 default_editorial_guidelines = """
 - Tono professionale, competente e appassionato, ma comprensibile anche ai non addetti.
 - Paragrafi brevi. Per le guide "how-to" usa elenchi puntati con i passaggi in ordine.

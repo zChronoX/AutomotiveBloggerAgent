@@ -1,6 +1,6 @@
 """
-Tool RAG esposto all'agente (ReAct).
-Wrapper snello: delega la logica di retrieval a rag/retriever.py.
+Tool analogo al KG, serve come wrapper per il database vettoriale locale.
+
 """
 
 from langchain_core.tools import tool

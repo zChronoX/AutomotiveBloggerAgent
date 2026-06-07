@@ -1,8 +1,6 @@
 """
 Definizione e compilazione del grafo LangGraph.
-Unica responsabilita': assemblare nodi, edges e compilare.
-
-Codice estratto da blogger_agent.py (sezione ASSEMBLAGGIO DEL GRAFO).
+Assemblaggio nodi, edges e compilare.
 """
 
 from langgraph.graph import StateGraph, END, START
@@ -32,13 +30,12 @@ from .routing import (
 
 def build_graph(checkpointer="default"):
     """Costruisce e compila il grafo dell'agente blogger.
-
     checkpointer:
       - "default" -> usa un MemorySaver interno (uso da CLI con main.py).
-      - None       -> compila SENZA checkpointer: necessario per LangGraph Studio,
-                       che inietta il PROPRIO checkpointer persistente. Passargli un
-                       grafo gia' checkpointato darebbe conflitto.
-      - oggetto    -> usa il checkpointer fornito.
+      - None      -> compila SENZA checkpointer: necessario per LangGraph Studio,
+                     che inietta il PROPRIO checkpointer persistente. Passargli un
+                     grafo gia' checkpointato darebbe conflitto.
+      - oggetto   -> usa il checkpointer fornito.
     """
     workflow = StateGraph(State, input=StateInput)
 
@@ -74,21 +71,17 @@ def build_graph(checkpointer="default"):
     workflow.add_edge("rewrite_question_node", "research_agent")
 
     workflow.add_edge("drafting_node", "review_node")
-    # review_node e update_kg_node usano Command(goto=...): nessun conditional_edge esplicito
-
     if checkpointer == "default":
         return workflow.compile(checkpointer=MemorySaver())
     if checkpointer is None:
-        # LangGraph Studio fornisce il suo checkpointer: compiliamo senza.
+        # Compilo senza checkpoiter per LangGraph Studio sennò mi da problemi
         return workflow.compile()
     return workflow.compile(checkpointer=checkpointer)
 
 
-# Istanza pronta all'uso da CLI (main.py): con MemorySaver interno.
+# Istanza per costruire il grafico con la memoria quando lo uso da terminiale
 graph = build_graph()
 
-# Factory per LangGraph Studio: compila SENZA checkpointer (lo inietta Studio).
-# Referenziata da langgraph.json -> "graph": "agent.graph:make_studio_graph"
 def make_studio_graph():
     """Entry point per LangGraph Studio (grafo senza checkpointer interno)."""
     return build_graph(checkpointer=None)

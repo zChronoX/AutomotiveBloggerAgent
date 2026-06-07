@@ -1,17 +1,11 @@
 """
-Server MCP di ricerca web (transport HTTP streamable).
+Modulo che implementa il protocollo MCP (Model Context Protocol)
+banalmente, serve per permettere all'agente di comunicare con un servizio
+esterno. Nel mio caso ho trasformato la ricerca web in un servizio
+indipendente tramite l'MCP invece che come servizio interno (e quindi un tool classico).
 
-Si avvia UNA VOLTA come servizio persistente (in un terminale dedicato) e resta
+Si avvia come servizio persistente (in un terminale dedicato) e resta
 in ascolto su http://127.0.0.1:8765/mcp. L'agente lo chiama via HTTP a ogni ricerca.
-
-Uso (dalla radice del progetto):
-    python -m mcp_server.search_server
-
-Design:
-- TavilyClient diretto con search_depth="advanced" e whitelist di domini automotive
-  affidabili (riduce rumore: niente video YouTube o fonti casuali);
-- sintesi PER-ARTICOLO con il modello locale (riassunto sostanzioso, non una frase);
-- output FORMATTATO leggibile: per ogni fonte Titolo / Riassunto / URL / Data.
 """
 
 import os
@@ -24,6 +18,9 @@ if _PROJECT_ROOT not in sys.path:
 import warnings
 warnings.filterwarnings("ignore")
 os.environ.setdefault("PYTHONWARNINGS", "ignore")
+
+# Fase di setup, uso FastMCP come framework standard per l'MCP.
+
 
 from mcp.server.fastmcp import FastMCP
 from tavily import TavilyClient
@@ -40,33 +37,37 @@ mcp_server = FastMCP("AutomotiveSearchServer", host="127.0.0.1", port=8765)
 
 tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY", ""))
 
-# ------------------------------------------------------------
-# PARAMETRI DI RICERCA (tarabili in cima al file)
-# ------------------------------------------------------------
+# Parametri di ricerca che posso essere adattati.
+# Servono come trade-off tra qualità della ricerca e velocità.
+# Impostati così, ogni ricerca web impiega dai 40 secondi fino ai 60.
+# Questi rappresentano il compromesso migliore.
 MAX_RESULTS = 5
-SEARCH_DEPTH = "advanced"   # "advanced" = risultati piu' ricchi (consigliato), "basic" = piu' veloce
-INCLUDE_RAW = True          # includi il testo integrale: da' al riassuntore piu' materiale
+SEARCH_DEPTH = "advanced"   # Advanced da risultati più ricchi, ci sono altri modificatori, come basic per risultati normali
+INCLUDE_RAW = True          # Includo il testo integrale, scartando elementi irrilevanti della pagina.
 
-# Whitelist di domini automotive/news italiani affidabili: limita il rumore (no YouTube,
-# social, ecc.) e mantiene le fonti in italiano, coerenti con un blog italiano.
-# Aggiungi/togli domini secondo le tue fonti di fiducia.
+# Whitelist dei domini in cui cercare. Spesso la ricerca
+# tornava "fonti" poco attendibili (es. video di YouTube, social, ecc.)
+# quindi ho costruito questa lista da cui prendere le fonti.
+
 ALLOWED_DOMAINS = [
     "quattroruote.it", "alvolante.it", "automoto.it", "motori.it",
-    "ansa.it", "ilsole24ore.com", "corriere.it", "repubblica.it",
-    "autoblog.it", "omniauto.it", "everyeye.it", "hdmotori.it",
+    "ansa.it", "autoblog.it", "omniauto.it", "hdmotori.it",
     "dueruote.it", "moto.it", "insella.it", "motociclismo.it",
     "motorbox.com", "automoto.it", "sicurauto.it", "vaielettrico.it",
-    "formulapassion.it", "gazzetta.it",
+    "formulapassion.it",
 ]
 
+
+# Configurazione del modello che riassume il contenuto delle pagine.
+# Usavo Phi 4 Mini in passato, ma l'ho confrontato con Ministral 3,
+# ed è molto più veloce e anche più discorsivo.
 summarizer_llm = ChatOllama(
     model=cfg.summarizer_model_name,
     num_ctx=cfg.summarizer_num_ctx,
     temperature=cfg.summarizer_temperature,
 )
 
-# Prompt di sintesi PER-ARTICOLO. Riassunto SOSTANZIOSO (non una frase): vogliamo che il
-# modello scrittore abbia abbastanza materiale. Vincolo: NON convertire le unita' di misura.
+# Prompt per la sintesi di una fonte/articolo.
 SUMMARIZE_ONE_PROMPT = """Sei un assistente che riassume una pagina web per un blog automotive.
 Riassumi il contenuto in italiano in 4-6 frasi complete, mantenendo TUTTI i dati concreti
 (modelli, cilindrate, potenze, prezzi, date, luoghi, dichiarazioni). Riporta le unita' di misura
@@ -74,12 +75,16 @@ ESATTAMENTE come nell'originale (NON convertire lb-ft, mph, libbre, ecc.). NON i
 che non sia nel testo. Scrivi solo il riassunto, senza preamboli."""
 
 
+
+# Metodo che riassume un singolo articolo, se è breve lo lascio così
+# se il riassunto dovesse non funzionare per qualche motivo
+# torno i primi 800 caratteri (sperando che contengano informazioni utili).
 def _summarize_one(title: str, content: str) -> str:
     text = (content or "").strip()
     if not text:
         return ""
     if len(text.split()) < 30:
-        return text  # gia' breve: lascialo com'e'
+        return text 
     try:
         resp = summarizer_llm.invoke([
             SystemMessage(content=SUMMARIZE_ONE_PROMPT),
@@ -90,6 +95,8 @@ def _summarize_one(title: str, content: str) -> str:
         return text[:800]
 
 
+# Metodo che toglie i duplicati tra i risultati, tenendo solo il primo URL che compare.
+# Spesso Tavily li torna.
 def _deduplicate(results: list) -> list:
     seen, unique = set(), []
     for r in results:
@@ -101,9 +108,11 @@ def _deduplicate(results: list) -> list:
             unique.append(r)
     return unique
 
-
+# Metodo che definisce il formato in output atteso per ogni fonte. 
+# La formattazione di ogni riassunto deve essere: Fonte N, Titolo, Riassunto, URL e la data
+# ma spesso non c'è perché Tavily fa le ricerche di default come topic "general"
+# nelle "news" invece compare.
 def _format_output(processed: list) -> str:
-    """Formato richiesto: per ogni fonte Titolo / Riassunto / URL / Data (se disponibile)."""
     if not processed:
         return "Nessun risultato valido dalla ricerca web. Prova con una query diversa."
     blocks = ["Risultati della ricerca web:"]
@@ -114,18 +123,13 @@ def _format_output(processed: list) -> str:
             f"Riassunto: {r['summary']}\n"
             f"URL: {r['url']}"
         )
-        # La data compare solo se Tavily l'ha effettivamente restituita (con topic='general'
-        # spesso non c'e'): meglio omettere la riga che scrivere sempre 'non disponibile'.
         if r.get("date"):
             block += f"\nData pubblicazione: {r['date']}"
         blocks.append(block)
     return "\n".join(blocks)
 
 
-# Parole che segnalano una richiesta di ATTUALITA' (notizia/evento recente): per queste
-# usiamo topic="news" su Tavily, che restituisce risultati recenti CON data di pubblicazione
-# (utile per privilegiare le fonti piu' aggiornate). Per tutto il resto (specifiche tecniche,
-# recensioni, confronti) usiamo "general". Dizionario deterministico e piccolo: niente modello.
+# Dizionario di parole chiave per la ricerca di attualità (usato per decidere se usare topic="news" o topic="general")
 _NEWS_KEYWORDS = (
     "novità", "novita", "salone", "fiera", "presentat", "svelat", "lancio", "lanciat",
     "ultime", "ultimo", "ultima", "annuncio", "annunciat", "debutto", "debutta",
@@ -133,18 +137,16 @@ _NEWS_KEYWORDS = (
 )
 
 
+
+# Metodo che sfrutta il dizionario sopra per scegliere il topic
 def _pick_topic(query: str) -> str:
-    """Sceglie il topic Tavily: 'news' per l'attualita' (con data), 'general' altrimenti."""
     q = (query or "").lower()
     return "news" if any(k in q for k in _NEWS_KEYWORDS) else "general"
 
-
+# Metodo che scarta risultati non validi, come sitemap, file XML e pagine senza contenuti (solo elenco di URLs).
+# Evito che il modello che riassume, si confonda e torni un output illeggibile.
 def _is_valid_article(r: dict) -> bool:
-    """
-    Scarta i risultati che non sono articoli leggibili: sitemap, file XML/feed, pagine di
-    categoria senza contenuto reale. Tavily a volte li restituisce e il riassuntore non puo'
-    ricavarne nulla di sensato (producono blob di URL illeggibili).
-    """
+
     url = (r.get("url") or "").lower()
     title = (r.get("title") or "").lower()
     content = r.get("content") or ""
@@ -161,16 +163,10 @@ def _is_valid_article(r: dict) -> bool:
         return False
     return True
 
-
+# Filtro che banalmente tiene in considerazione le parole chiave della query, se
+# la fonte non contiene nessuna di queste allora viene scartata.
+# Se nessuna delle fonti ha le keyword, non applico il filtro.
 def _relevance_filter(query: str, results: list) -> list:
-    """
-    Filtro di rilevanza minimo: tiene solo i risultati il cui titolo/contenuto contiene
-    almeno una delle parole 'forti' della query (marca, modello, termini chiave > 3 lettere).
-    Serve a scartare i risultati totalmente fuori tema che Tavily a volte restituisce, specie
-    con topic='news' dove privilegia la freschezza sulla pertinenza (es. una Bentley su una
-    query Honda). Se nessun risultato contiene le keyword, non filtriamo (meglio qualcosa che
-    niente, e il Self-RAG a valle fara' da secondo controllo).
-    """
     import re
     stop = {"recensioni", "recensione", "prestazioni", "affidabilità", "affidabilita",
             "design", "review", "comparison", "confronto", "ultime", "novità", "novita",
@@ -187,15 +183,13 @@ def _relevance_filter(query: str, results: list) -> list:
             kept.append(r)
     return kept if kept else results
 
-
+# Metodo che esegue la logica MCP. L'agente fa una query, dal topic capisco se è una news o no,
+# viene eseguita la ricerca tramite Tavily, deduplico i risultati, scarto i 
+# i non articoli, applico il filtro di rilevanza sopra, per ogni risultato ottenuto
+# faccio un riassunto e poi formatto l'output in modo da essere leggibile sia
+# dall'agente che da me su LangSmith.
 @mcp_server.tool()
 def search_and_summarize(query: str) -> str:
-    """
-    Esegue una ricerca web automotive (Tavily, ricerca avanzata su domini affidabili) e
-    riassume OGNI fonte con il modello locale. Restituisce un output formattato e leggibile:
-    per ciascuna fonte Titolo, Riassunto, URL e (se disponibile) Data di pubblicazione.
-    Per le query di attualita' usa topic='news' (risultati recenti con data), altrimenti 'general'.
-    """
     try:
         topic = _pick_topic(query)
         result = tavily_client.search(
@@ -209,10 +203,9 @@ def search_and_summarize(query: str) -> str:
         results = result.get("results", []) if isinstance(result, dict) else []
         results = _deduplicate(results)
 
-        # Fallback: se la whitelist non trova nulla, riproviamo UNA volta mantenendo la
-        # whitelist ma con topic='general' (piu' legato al contenuto della query che alla
-        # freschezza). NON ripetiamo senza whitelist: senza domini, con news, Tavily pescava
-        # notizie automotive casuali (es. una Bentley su una query Honda).
+        # Nel caso in cui la whitelist non faccia tornare nessuna fonte
+        # faccio si che la ricerca venga fatta globalmente in tutto il web
+        # meglio avere qualcosa (anche di sbagliato) che niente completamente.
         if not results:
             result = tavily_client.search(
                 query=query, search_depth=SEARCH_DEPTH, max_results=MAX_RESULTS,
@@ -223,12 +216,11 @@ def search_and_summarize(query: str) -> str:
         if not results:
             return "Nessuna informazione pertinente trovata sul web per questa query."
 
-        # Scarta sitemap, feed, pagine di categoria (non sono articoli leggibili).
         results = [r for r in results if _is_valid_article(r)]
         if not results:
             return "Nessuna fonte web valida trovata per questa query (solo pagine non-articolo)."
 
-        # Filtro di rilevanza: scarta i risultati fuori tema (marca/modello assenti dal titolo).
+
         results = _relevance_filter(query, results)
 
         processed = []
@@ -248,6 +240,5 @@ def search_and_summarize(query: str) -> str:
 
 
 if __name__ == "__main__":
-    print("[MCP SERVER] Avvio su http://127.0.0.1:8765/mcp ...", file=sys.stderr)
-    print("[MCP SERVER] Lascia questa finestra aperta. CTRL+C per fermare.", file=sys.stderr)
+    print("Server MCP avviato su http://127.0.0.1:8765/mcp", file=sys.stderr)
     mcp_server.run(transport="streamable-http")

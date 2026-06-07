@@ -1,17 +1,7 @@
 """
 Popola il Knowledge Graph (Neo4j) con alcuni post-esempio.
-
-A COSA SERVE: il Knowledge Graph rappresenta la MEMORIA EDITORIALE del blog (i post
-gia' pubblicati). Su un'installazione nuova il KG e' vuoto, quindi la gap-analysis del
-planner non ha nulla su cui ragionare e non si vede il valore della "memoria" durante una
-demo. Questo script inserisce alcuni articoli fittizi ma realistici, simulando uno storico
-editoriale: cosi', lanciando l'agente e chiedendo "suggeriscimi argomenti", il planner cita
-i post esistenti ed evita di riproporli, dimostrando la gap-analysis.
-
-NON fa parte del flusso dell'agente: e' un'utility da lanciare UNA TANTUM prima di una demo.
-
-Uso (dalla radice del progetto, con Neo4j attivo e .env configurato):
-    python -m knowledge_graph.seed
+Quando inizializzo da zero il progetto, il KG è vuoto, quindi il planner non avendo una gap-analysis, non c'è una
+"memoria editoriale". Inserisco perciò degli articoli fittizi ma realistici per simulare uno storico editoriale
 """
 
 from dotenv import load_dotenv
@@ -19,8 +9,7 @@ load_dotenv()
 
 from .updater import update_kg_data
 
-# Post-esempio: uno storico editoriale plausibile per il blog "Motori & Dintorni".
-# Coprono alcuni temi, lasciandone scoperti altri di proposito (per far emergere i gap).
+# Post-esempio che coprono vari argomenti. Ogni post è un dizionario con i campi topic, post_title, category, sources, claims, related_topics.
 SEED_POSTS = [
     {
         "topic": "aerodinamica attiva",
@@ -86,19 +75,15 @@ SEED_POSTS = [
 
 
 def main():
-    print("== Seed del Knowledge Graph (post-esempio per la demo) ==")
+    print("Seed del Knowledge Graph")
     ok = 0
     for post in SEED_POSTS:
         try:
             result = update_kg_data(**post)
-            print(f"  [OK] '{post['post_title']}'")
+            print(f" Aggiunto post: '{post['post_title']}'")
             ok += 1
         except Exception as e:
-            print(f"  [ERRORE] '{post['post_title']}': {e}")
+            print(f" Errore nell'aggiunta del post '{post['post_title']}': {e}")
     print(f"\nInseriti {ok}/{len(SEED_POSTS)} post nel Knowledge Graph.")
-    print("Ora lanciando l'agente e chiedendo 'suggeriscimi argomenti' vedrai la gap-analysis "
-          "ragionare sui post esistenti.")
-
-
 if __name__ == "__main__":
     main()

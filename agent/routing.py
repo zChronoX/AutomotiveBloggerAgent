@@ -10,53 +10,71 @@ from .helpers import wants_post, has_collected_sources
 from .llm import llm
 from utils import GradeDocuments, should_grade_tool
 
-# Limite massimo di passi di ricerca per post. Con 11 tool disponibili e task complessi
-# (es. confronti che richiedono fetch_vehicle_specs su 2 veicoli + compare_vehicles),
-# 6 e' un buon equilibrio: lascia margine per la sequenza ottimale senza permettere
-# loop infiniti. Oltre questo limite il sistema passa comunque alla stesura.
+# Limite massimo di chiamate per i tool durante l'intero ciclo, serve per evitare che
+# il modello chiami un numero di tool infinito e impieghi troppo tempo.
+# 10 è un numero accettabile, in quanto considera il caso "peggiore"
+# che sarebbe "fetch_vehicle_specs" chiamato due volte per ogni auto da confrontare,
+# più il "compare" ed eventualmente una ricerca web aggiuntiva.
 MAX_RESEARCH_STEPS = 10
+
+
 
 
 def route_after_clarification(state: dict) -> Literal["clarification_node", "brief_node"]:
     """
-    Dopo il nodo di clarification:
-      - status 'clarifying' -> l'utente ha risposto a una domanda: torna a clarification_node
-        per RI-VALUTARE se ora la richiesta e' chiara (il loop e' limitato da MAX_CLARIFICATIONS).
-      - status 'scoped' (o altro) -> la richiesta e' chiara: procedi alla generazione del brief.
+    Controllo il campo "status", se la riposta è chiara (oppure siamo arrivati al limite dei 2 chiarimenti)
+    allora andiamo al nodo per il brief, altrimenti chiediamo più spiegazioni.
+    Il numero di chiarimenti è impostato a 2 nel nodo di clarification. Empiricamente
+    dovrebbe essere un buon compromesso tra numero di chiarimenti ed informazioni raccolte per il briefing.
     """
     if state.get("status") == "clarifying":
         return "clarification_node"
     return "brief_node"
 
 
+
+# Qui serve per modificare la rotta del grafo nel caso in cui l'utente vuole solo
+# suggerimenti e quindi glieli diamo ma non scriviamo post. Altrimenti se vuole
+# un post andiamo avanti e chiamiamo i tool che servono.
 def route_after_planner(state: dict) -> Literal["research_agent", "suggest_topics_node"]:
     """L'utente vuole un POST scritto, o solo dei SUGGERIMENTI di argomenti?"""
     return "research_agent" if wants_post(state.get("user_input", "")) else "suggest_topics_node"
 
+# Qui gestisco il ciclo ReACT in modo più complesso con una serie di guardrail per le fonti.
+# Come già evidenziato più volte, il modello locale non sempre segue i passaggi del ReACT
+# (dice di voler chiamare 3 tool, ma alla fine non ne chiama mezzo, oppure chiama un tool totalmente sbagliato)
+# pertanto qui vediamo se il numero di tool totali usati è 10 (max_step di sopra), se si allora forziamo il passaggio alla stesura, altrimenti procediamo normalmente.
+# Se non ha usato ancora 10 tool, ma ha comunque fonti (perché c'è stata una ricerca oppure perché ha chiamato uno dei tool grounding)
+# allora andiamo comunque con la stesura. Altrimenti forziamo la ricerca web. 
 
 def route_after_research(state: dict) -> Literal["tools", "drafting_node", "forced_search_node"]:
-    """Tool chiamato -> esecuzione; altrimenti -> stesura (con guardia anti-loop e guardrail fonti)."""
     last = state["messages"][-1]
     if getattr(last, "tool_calls", None):
         n = sum(1 for m in state["messages"] if isinstance(m, ToolMessage))
         if n >= MAX_RESEARCH_STEPS:
-            print("[ReAct] Max passi di ricerca raggiunto: passo alla stesura.")
+            print("[ReAct] Max passi di ricerca raggiunto, si passa alla stesura.")
             return "drafting_node"
         return "tools"
-    # Il modello vuole passare alla stesura. GUARDRAIL: se non ha raccolto NESSUNA fonte
-    # e non l'abbiamo gia' forzata, imponiamo una ricerca web prima di scrivere.
+    # Il modello vuole passare alla stesura. Usiamo un guardrail: se non ha raccolto nessuna fonte
+    # dai tool grounding, e non l'abbiamo gia' forzata, imponiamo una ricerca web prima di scrivere.
     if not has_collected_sources(state) and not state.get("forced_web_search"):
         return "forced_search_node"
     return "drafting_node"
 
 
+
+
+# Valuto la pertinenza dei risultati raccolti dai tool "gradabili", come la ricerca web
+# che spesso porta a fonti poco pertinenti anche con query corrette. E' una whitelist
+# perché nel caso in cui aggiungessi altri tool futuri che non hanno bisogno di essere gradati
+# di default non viene gradato.
+
 def grade_documents(state: dict) -> Literal["research_agent", "rewrite_question_node"]:
-    """Self-RAG: valuta SOLO le fonti dei tool di ricerca (via should_grade_tool)."""
     last = state["messages"][-1]
     if not isinstance(last, ToolMessage) or not should_grade_tool(getattr(last, "name", "")):
         return "research_agent"
 
-    print(f"\n[Self-RAG] Valuto la rilevanza delle fonti dal tool '{last.name}'...")
+    print(f"\nValuto la rilevanza delle fonti dal tool '{last.name}'.")
     grader = llm.with_structured_output(GradeDocuments)
     prompt = (
         f"Il seguente documento e' rilevante per il tema '{state.get('current_topic','')}'?\n"
@@ -68,7 +86,7 @@ def grade_documents(state: dict) -> Literal["research_agent", "rewrite_question_
         return "research_agent"
 
     if score == "yes":
-        print("-> Fonti rilevanti.")
+        print(": Fonti rilevanti.")
         return "research_agent"
-    print("-> Fonti non rilevanti: riformulo.")
+    print(": Fonti non rilevanti: riformulo.")
     return "rewrite_question_node"

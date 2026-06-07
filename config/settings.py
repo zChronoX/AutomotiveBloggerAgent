@@ -1,3 +1,6 @@
+
+" File di configurazione dell'intero agente, dove scegliamo parametri operativi con la possibilità di sovrascriverli direttamente dell'env."
+
 import os
 from dataclasses import dataclass, fields
 from typing import Any, Optional
@@ -7,10 +10,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Se nel .env e' presente HF_TOKEN, lo esponiamo come variabile d'ambiente che le
-# librerie HuggingFace leggono automaticamente: elimina il warning "unauthenticated
-# requests to the HF Hub" e abilita rate limit/download migliori. Va fatto QUI perche'
-# configuration.py e' importato prima del caricamento dei modelli di embedding.
+# Usare il token HF elimina il warning "unauthenticated
+# requests to the HF Hub" e abilita rate limit/download migliori.
 _hf_token = os.environ.get("HF_TOKEN")
 if _hf_token:
     os.environ.setdefault("HUGGINGFACE_HUB_TOKEN", _hf_token)
@@ -21,102 +22,72 @@ if _hf_token:
 class Configuration:
     """
     Configurazioni per l'agente Blogger Copilot.
-
-    La struttura (dataclass kw_only + from_runnable_config) ricalca il
-    configuration.py del tutorial "agents-from-scratch": i valori possono essere
-    sovrascritti da variabili d'ambiente (in MAIUSCOLO) o da un RunnableConfig.
+    I valori possono essere sovrascritti da variabili d'ambiente o da un RunnableConfig.
     """
 
-    # --- Parametri dei modelli locali (Ollama) - ARCHITETTURA IBRIDA ---
-    # Ogni modello fa cio' in cui eccelle:
-    #  - model_name (Granite): il "cervello" - planning, scelta dei tool, ricerca, grading,
-    #    routing, update KG. Granite 4.1 3B sceglie i tool in modo affidabile ed e' veloce.
-    #  - draft_model_name (Ministral 8B): la "penna" - SOLO la stesura dell'articolo finale.
-    #    Ministral produce prosa piu' ricca e discorsiva, adatta a un blog. La sua lentezza
-    #    pesa una volta sola (il drafting), non sull'intero flusso ReAct.
+    # Parametri dei modelli locali (Ollama)
+    # Ho scelto lo stesso modello tutto il progetto, e per la ricerca.
     model_name: str = "ministral-3:3b"
     draft_model_name: str = "ministral-3:3b"
     model_provider: str = "ollama"
 
-    # Temperatura per i nodi DETERMINISTICI (planning, grading, routing, update KG):
-    # 0.0 = output stabile e ripetibile, ideale dove serve precisione e non creativita'.
+    # Temperatura per i nodi deterministici in modo da avere un'output stabile e ripetibile
     temperature: float = 0.0
 
-    # Temperatura per la SOLA stesura dell'articolo (drafting_node):
-    # piu' alta per ottenere prosa meno piatta e meno ripetitiva.
-    # Usata in blogger_agent.py da un client LLM dedicato alla stesura.
+    # Temperatura per la stesura dell'articolo più alta di quella sopra per avere un output
+    # più creativo
     draft_temperature: float = 0.6
 
-    # Finestra di contesto dei modelli: se non impostata, Ollama usa un default piccolo
-    # (2048 token) che puo' TRONCARE prompt+cronologia quando ci sono molti tool da esporre
-    # e una conversazione ReAct lunga -> il modello "vede" meno e sceglie peggio i tool.
-    # Granite supporta contesti ampi: 32768 da' margine abbondante. Verificato sperimentalmente
-    # che un contesto adeguato migliora nettamente la scelta dei tool.
+    # Contesto del modello principale molto ampio (ai limiti della VRAM) per permettere al modello
+    # di avere un buon ragioamento ReAct con tanti step e tool da utilizzare
     model_num_ctx: int = 22528
 
-    # Contesto SEPARATO per il modello di stesura (Ministral 8B). La stesura riceve un input
-    # contenuto (topic + fonti + linee guida), non l'intera cronologia ReAct con tutti i tool,
-    # quindi NON serve un contesto enorme. Inoltre un 8B con KV cache da 32K rischia di sforare
-    # la VRAM (spillover in RAM = molto lento). 8192 e' ampiamente sufficiente per un articolo.
+    # Contesto per la stesura più contenuto, non serve andare ai limiti della VRAM per la stesura.
     draft_num_ctx: int = 16384
 
-    # Tetto di GUARDIA sui token generati dalla stesura (num_predict). Serve a fermare il
-    # modello se entra in un loop ripetitivo/allucinatorio, evitando che scriva all'infinito
-    # riempiendo il context. Un post normale e' ~3000-4500 token, quindi 8192 lascia ampio
-    # margine senza mai tagliare un articolo legittimo. Solo sulla stesura: brain e riassuntore
-    # restano col default illimitato (i loro output sono naturalmente brevi).
-    # Configurabile da .env (DRAFT_NUM_PREDICT). -1 = nessun limite.
+    # Indice di sicurezza per il numero di token durante la stesura.
+    # il modello potrebbe entrare in un loop ripetitivo e generare
+    # un testo infinito, pertanto mettiamo un limite a 8K di token, quindi circa 4/5000 parole.
     draft_num_predict: int = int(os.environ.get("DRAFT_NUM_PREDICT", "8192"))
 
-    # --- RAG: soglia di distanza e numero di candidati ---
-    # DISTANCE_THRESHOLD: un chunk locale viene incluso solo se la sua distanza dalla query
-    # e' <= soglia. Tarata su dati reali (test_rag_threshold.py): i documenti PERTINENTI piu'
-    # lontani osservati (reti di bordo) stavano a ~1.065, quindi 1.10 li tiene; i NON pertinenti
-    # piu' vicini (Ducati) stavano a ~1.216, quindi 1.10 li scarta.
-    # FALLBACK_MAX: quando il filtro a soglia scarta TUTTO, invece di reinfilare a forza il
-    # documento meno lontano (che causava fonti spurie, es. reti Ethernet in un post su una moto),
-    # lo teniamo SOLO se almeno sotto questa soglia piu' permissiva; oltre, restituiamo "nessun
-    # documento pertinente" (meglio nessuna fonte che una sbagliata).
-    # Entrambe configurabili da .env (RAG_DISTANCE_THRESHOLD, RAG_FALLBACK_MAX, RAG_TOP_K).
+    # Soglie per il RAG, ne ho utilizzate due per cercare di avere un buon compromesso tra
+    # accuratezza e pertinenza dei risultati. La prima infatti serve ad evitare che 
+    # documenti non pertineti vengano inseriti nel post. Mentre la seconda serve per evitare che
+    # nel caso in cui venissero scartati chunk "buoni", alzo la soglia ad 1.20, ma la tengo comunque
+    # "bassa" per evitare di inserire falsi positiv.
+    # top_k indica invece il numero massimo di chunk da reperire.
     rag_distance_threshold: float = float(os.environ.get("RAG_DISTANCE_THRESHOLD", "1.10"))
     rag_fallback_max: float = float(os.environ.get("RAG_FALLBACK_MAX", "1.20"))
     rag_top_k: int = int(os.environ.get("RAG_TOP_K", "5"))
 
-    # --- Modello RIASSUNTORE del server MCP di ricerca (mcp_search_server.py) ---
-    # E' un modello SEPARATO dal modello del grafo: legge molte pagine web (Tavily)
-    # e ne produce un riassunto tecnico denso. Usa una context ampia (num_ctx) per
-    # leggere piu' contenuto possibile; temperatura bassa per un riassunto fedele.
-    # NOTA: su GPU con poca VRAM (es. 8GB) num_ctx alto puo' causare spillover in RAM
-    # (piu' lento) o OOM: e' un valore SPERIMENTALE da tarare sulla propria macchina.
-    # RIASSUNTORE: ora e' lo STESSO modello del brain (Ministral). Il confronto su 4 testi
-    # ha mostrato che Ministral riassume con pari/maggiore fedelta' ai dati ed e' piu' veloce
-    # di Phi4-Mini; usandolo per la sintesi NON c'e' piu' swap di modelli in VRAM (il modello
-    # resta caldo). Tenuto come campo separato per poterlo disaccoppiare in futuro se serve.
+    # Modello utilizzato per riassumere i risultati delle ricerche tramite Tavily
+    # invece che passare i risultati direttamente come fonte per la stesura, questi
+    # vengono riassunti dallo stesso modello e poi messi a disposizione di se stesso.
+    # La temperatura è bassa, i riassunti devono essere fedeli e il contesto più
+    # alto possibile per non perdere informazioni essenziali.
     summarizer_model_name: str = "ministral-3:3b"
     summarizer_temperature: float = 0.2
     summarizer_num_ctx: int = 22528
 
-    # --- Osservabilita' LangSmith (requisito di valutazione del PDF) ---
-    # NOTA IMPORTANTE: questi campi servono solo a DOCUMENTARE/ISPEZIONARE la
-    # configurazione. Il tracing di LangSmith NON si attiva da qui: si attiva
-    # tramite le variabili d'ambiente lette da LangChain all'import
-    # (LANGSMITH_TRACING / LANGSMITH_API_KEY / LANGSMITH_PROJECT nel file .env).
-    # Qui le rileggiamo solo per poterle validare e mostrare a colpo d'occhio.
+    # Questi campi di "osservabilità" servono a capire se la configurazione contiene
+    # le variabili necessarie per il tracing. Non attiva il tracing vero.
+    
     langsmith_tracing: str = os.environ.get("LANGSMITH_TRACING", "false")
     langsmith_project: Optional[str] = os.environ.get("LANGSMITH_PROJECT", "blogger-copilot")
 
-    # --- Modalita' DEBUG ---
-    # Quando attiva (DEBUG=true nel .env), stampa le diagnostiche di sviluppo
-    # ([DIAG] tool_call, [DIAG RAG] distanze, ecc.). Di default e' DISATTIVATA,
-    # cosi' l'output e' pulito per l'uso normale e per la demo. Le diagnostiche
-    # restano nel codice (utili per ispezionare il comportamento), ma silenziose.
+    # Valore booleano per attivare le diagnostiche (come tool call, RAG, ecc)
+    # Per default e' disattivato, cosi' l'output e' pulito.
+    
     debug: bool = os.environ.get("DEBUG", "false").strip().lower() == "true"
+
+
+    # Funzione di utilita' per creare un'istanza di Configuration da un RunnableConfig
 
     @classmethod
     def from_runnable_config(
         cls, config: Optional[RunnableConfig] = None
     ) -> "Configuration":
-        """Crea un'istanza di Configuration da un RunnableConfig (pattern del tutorial)."""
+        """Crea un'istanza di Configuration da un RunnableConfig"""
         configurable = (
             config["configurable"] if config and "configurable" in config else {}
         )
@@ -125,24 +96,18 @@ class Configuration:
             for f in fields(cls)
             if f.init
         }
-        # 'debug' arriva come stringa dall'ambiente ("true"/"false"): convertilo a bool,
-        # altrimenti la stringa "false" risulterebbe truthy in Python.
+        # converto "debug" da stringa a bool sennò da errore
         if isinstance(values.get("debug"), str):
             values["debug"] = values["debug"].strip().lower() == "true"
-        # Filtra i valori None prima di inizializzare la classe
         return cls(**{k: v for k, v in values.items() if v is not None})
 
 
+
+
+# Funzione di utilita' per controllare se LangSmith e' configurato correttamente
+# nel main.py, un semplice "health-check" per capire se il tracing funziona o manca qualcosa.
+
 def check_langsmith_setup() -> bool:
-    """
-    Diagnostica leggibile dell'osservabilita' LangSmith.
-
-    Da chiamare all'avvio (es. in main.py) per sapere SUBITO se le run verranno
-    tracciate, invece di scoprirlo a fine progetto. Non attiva nulla: si limita a
-    controllare le variabili d'ambiente che LangChain usa per il tracing.
-
-    Restituisce True se il tracing risulta configurato correttamente.
-    """
     tracing = os.environ.get("LANGSMITH_TRACING", "false").strip().lower() == "true"
     api_key = os.environ.get("LANGSMITH_API_KEY")
     project = os.environ.get("LANGSMITH_PROJECT", "(default)")

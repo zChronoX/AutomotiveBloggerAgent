@@ -1,14 +1,6 @@
 """
-Pipeline di ingestione documenti nel vector store locale (ChromaDB).
-
-Legge tutti i .txt dalla cartella sorgente, li suddivide in chunk e li indicizza.
-I parametri condivisi (PERSIST_DIR, COLLECTION_NAME, EMBEDDING_MODEL) vengono da
-rag/vectorstore.py: un unico punto di verita'.
-
-Codice originale da ingest_blog_data.py.
-
-Uso (dalla radice del progetto):
-    python -m rag.ingest
+Script che popola ChromaDB con i documenti locali della cartella "blog_sources"
+Funziona similmente a seed.kg per KG, ma in questo caso mi serve per il RAG.
 """
 
 import os
@@ -19,15 +11,21 @@ from langchain_chroma import Chroma
 
 from .vectorstore import PERSIST_DIR, COLLECTION_NAME, embeddings
 
-# Cartella che contiene i documenti privati del blogger (appunti, manuali, vecchi articoli)
+# Cartella che contiene i documenti privati del blogger (appunti, manuali, ecc)
 SOURCE_DIR = "blog_sources"
 
 
+
+# Metodo che prende tutti i file txt della cartellla
+# li carica come documenti di LangChain
+# li divide in chunk fissi da 500 caratteri
+# più una sovrapposizione di 50 caratteri
+# così non perdo informazioni tra due chunk
+# trasformo ogni chunk in un vettore numerico 
+# e lo salvo su ChromaDB.
+
+
 def ingest_documents(source_dir: str = SOURCE_DIR):
-    """
-    Legge TUTTI i file .txt presenti in `source_dir`, li suddivide in chunk e li
-    indicizza in ChromaDB per il RAG locale (memoria privata del blogger).
-    """
     # 1. Caricamento di tutti i .txt della cartella
     file_paths = sorted(glob.glob(os.path.join(source_dir, "*.txt")))
     if not file_paths:
@@ -40,15 +38,15 @@ def ingest_documents(source_dir: str = SOURCE_DIR):
         docs.extend(TextLoader(path, encoding="utf-8").load())
     print(f"Caricati {len(docs)} documenti da {len(file_paths)} file in '{source_dir}/'.")
 
-    # 2. STRATEGIA DI CHUNKING (come da slide del corso): recursive + sliding window
+    # Recursive chunking + sliding window
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=500,        # Dimensione fissa
-        chunk_overlap=50,      # Finestra sovrapposta (sliding window)
-        separators=["\n\n", "\n", ".", " "],  # Ricorsivo: paragrafi -> frasi -> parole
+        chunk_overlap=50,      # Finestra sovrapposta 
+        separators=["\n\n", "\n", ".", " "],  
     )
     splits = text_splitter.split_documents(docs)
 
-    # 3. Embedding e salvataggio nel vector store locale
+    # Embedding e salvataggio nel vector store locale
     Chroma.from_documents(
         documents=splits,
         embedding=embeddings,
@@ -60,8 +58,8 @@ def ingest_documents(source_dir: str = SOURCE_DIR):
 
 
 if __name__ == "__main__":
-    # Crea una cartella e un file di esempio (dominio AUTOMOTIVE) per testare lo script.
-    # In uso reale, popola 'blog_sources/' con i tuoi appunti e manuali e rilancia.
+    # Nel caso in cui eseguo lo script ma non ci sono ancora file txt dentro la cartella blog_sources
+    # viene creato un file di esempio.
     os.makedirs(SOURCE_DIR, exist_ok=True)
     sample_path = os.path.join(SOURCE_DIR, "appunti_manutenzione_auto.txt")
     if not os.path.exists(sample_path):

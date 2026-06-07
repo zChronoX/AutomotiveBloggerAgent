@@ -1,18 +1,6 @@
 """
-Tool di ricerca web tramite MCP, basato su langchain-mcp-adapters.
-
-Usa la libreria ufficiale del notebook 3 del tutorial Deep Research
-(langchain_mcp_adapters.MultiServerMCPClient) ma con transport HTTP "streamable_http"
-invece di stdio: su Windows lo stdio ha problemi noti con la gestione dei sottoprocessi,
-mentre l'HTTP con server persistente e' affidabile e gia' testato nel progetto.
-
-ARCHITETTURA: il server MCP (mcp_server/search_server.py) va avviato a parte come
-servizio persistente, in un terminale dedicato:
-    python -m mcp_server.search_server
-Il client si collega via HTTP a ogni ricerca.
-
-Il nostro grafo e' sincrono, quindi incapsuliamo la chiamata MCP (async) in un wrapper
-@tool sincrono eseguito in un event loop dedicato.
+Tool di ricerca che chiama il server MCP. A differenza di stdio
+che apparentemente da problemi, uso streamable_http. 
 """
 
 import asyncio
@@ -29,7 +17,7 @@ logging.getLogger("mcp").setLevel(logging.CRITICAL)
 MCP_SERVER_URL = "http://127.0.0.1:8765/mcp"
 MCP_TIMEOUT_SECONDS = 90
 
-# Configurazione MCP in stile notebook 3, con transport HTTP (streamable_http).
+# Configurazione MCP con transport HTTP (streamable_http).
 MCP_CONFIG = {
     "automotive_search": {
         "url": MCP_SERVER_URL,
@@ -37,26 +25,17 @@ MCP_CONFIG = {
     }
 }
 
-# Client MCP inizializzato in modo lazy (come get_mcp_client nel notebook 3).
 _client = None
 
-
+# Restituisce il client MCP multi-server
 def _get_mcp_client() -> MultiServerMCPClient:
-    """Restituisce (creandolo una sola volta) il client MCP multi-server."""
     global _client
     if _client is None:
         _client = MultiServerMCPClient(MCP_CONFIG)
     return _client
 
-
+# Normalizzo il risultato ottenuto dal protocollo MCP, estraendo solo il testo pulito.
 def _extract_text(result) -> str:
-    """
-    Estrae il testo pulito dalla risposta del tool MCP. langchain-mcp-adapters puo'
-    restituire: una stringa gia' pronta, oppure una lista di blocchi tipo
-    [{'type': 'text', 'text': '...'}], oppure una tupla (content, artifact). Qui
-    normalizziamo tutti i casi a testo semplice, evitando che tag e '\\n' letterali
-    finiscano nell'output (com'era con un str() grezzo sulla struttura).
-    """
     if result is None:
         return ""
     if isinstance(result, tuple) and result:
@@ -80,9 +59,9 @@ def _extract_text(result) -> str:
         return c if isinstance(c, str) else _extract_text(c)
     return str(result)
 
-
+# Funzione asincrona che recupera il client, chiede al server i tool MCP che abbiamo (nel nostro caso 1)
+# ottiene search_and_summarize, se non lo trova torna errore.
 async def _run_mcp_search(query: str) -> str:
-    """Ottiene i tool dal server MCP e invoca 'search_and_summarize' (async)."""
     client = _get_mcp_client()
     mcp_tools = await client.get_tools()
     search_tool = next((t for t in mcp_tools if t.name == "search_and_summarize"), None)
@@ -92,7 +71,8 @@ async def _run_mcp_search(query: str) -> str:
     text = _extract_text(result).strip()
     return text if text else "Il server MCP non ha restituito alcun testo."
 
-
+# Creo un'evento isolato per la ricerca web. Ha un timeout di 90 secondi
+# nel caso in cui ci sono stati errori con la ricerca (visto che solitamente impiega dai 40 ai 60 secondi).
 def _run_in_dedicated_loop(query: str) -> str:
     """Esegue la coroutine MCP in un event loop nuovo e dedicato (contesto sync del grafo)."""
     loop = asyncio.new_event_loop()
@@ -103,10 +83,11 @@ def _run_in_dedicated_loop(query: str) -> str:
     finally:
         loop.close()
 
-
+# Tool usato dall'agente per fare ricerche sul web.
+# nel caso in cui il server MCP non risponda entro i tempi previsti
+# o ci siano stati errori con la ricerca, avvisa l'agente e non fa bloccarsi l'intero processo.
 @tool(description=WEB_SEARCH_PROMPT)
 def mcp_web_search(query: str) -> str:
-    """Tool di ricerca web: delega ricerca+sintesi al server MCP HTTP (via langchain-mcp-adapters)."""
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(_run_in_dedicated_loop, query)

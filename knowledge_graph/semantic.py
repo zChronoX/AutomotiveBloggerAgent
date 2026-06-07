@@ -1,27 +1,19 @@
 """
-Matching SEMANTICO dei topic del Knowledge Graph.
-
-Invece di confrontare i nomi dei topic come stringhe esatte (fragile: "alfa romeo
-giulia quadrifoglio" != "giulia quadrifoglio"), confrontiamo i loro EMBEDDING e
-consideriamo "lo stesso topic" quelli con similarita' coseno sopra una soglia.
-
-Riusa il modello di embedding gia' caricato per il RAG (all-MiniLM-L6-v2): nessun
-modello aggiuntivo in VRAM.
-
-Requisito di progetto soddisfatto: il KG riconosce i soggetti gia' trattati anche
-se formulati in modo diverso, rendendo affidabili la gap-analysis (anti-ripetizione)
-e la coerenza in drafting.
+Script che mi aiuta con la semantica nel KG. Nel caso in cui confrontassi stringhe di topic
+leggermente diverse, il KG li vedrebbe come due argomenti completamente differenti e potrei
+finire per scrivere più volte articoli sugli stessi argomenti andando contro il principio di unicità del KG.
+Ho deciso di usare gli embedding del modello all-MiniLM-L6-v2 per confrontare i topic del KG.
+Invece che confrontare stringe, trasformo i topic in vettori numerici come il RAG, confronto le
+similarità coseno tra vettori, se supero una certa soglia (che ho testato con un altro script)
+allora è lo stesso topic.
 """
 
 import numpy as np
-from rag.vectorstore import embeddings  # istanza HuggingFaceEmbeddings gia' inizializzata
-
-# Soglia di similarita' coseno oltre la quale due topic sono considerati lo STESSO.
-# VALORE DI PARTENZA: va verificato sul proprio hardware/dati. Con all-MiniLM-L6-v2,
-# soggetti uguali formulati diversamente stanno tipicamente sopra ~0.75, soggetti
-# diversi ben sotto. Se vedi falsi match, alza la soglia; se non aggancia i doppioni,
-# abbassala. Configurabile via .env (KG_TOPIC_SIM_THRESHOLD).
+from rag.vectorstore import embeddings  
 import os
+
+
+# Posso impostare la similarità dall'env, in alternativa ne metto una già testata.
 try:
     SIMILARITY_THRESHOLD = float(os.getenv("KG_TOPIC_SIM_THRESHOLD", "0.75"))
 except ValueError:
@@ -39,10 +31,7 @@ def _cosine(a, b) -> float:
 
 def best_semantic_match(query_topic: str, candidate_topics: list[str], threshold: float = None):
     """
-    Dato un topic cercato e la lista dei topic esistenti nel KG, restituisce il
-    candidato semanticamente piu' vicino SE supera la soglia, altrimenti None.
-
-    Ritorna: (topic_match, score) oppure (None, best_score) se sotto soglia.
+    Applico quanto scritto sopra.
     """
     if threshold is None:
         threshold = SIMILARITY_THRESHOLD
@@ -53,7 +42,7 @@ def best_semantic_match(query_topic: str, candidate_topics: list[str], threshold
         q_emb = embeddings.embed_query(query_topic)
         cand_embs = embeddings.embed_documents(candidate_topics)
     except Exception:
-        # Se l'embedding fallisce, nessun match semantico (il chiamante usera' il fallback)
+        # Se l'embedding fallisce torno 0. Si può usare un alternativa di confronto tra stringhe.
         return None, 0.0
 
     best_topic, best_score = None, -1.0

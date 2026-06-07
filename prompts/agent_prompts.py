@@ -1,12 +1,16 @@
 """
-Prompt di orchestrazione dell'agente (scoping, planning, research kickoff, drafting).
-Estratti da blogger_agent.py per centralizzare tutti i prompt in un unico modulo.
-Lo scoping (clarification + brief) e' ripreso dal notebook 1 del tutorial Deep Research.
+File che contiene tutti i prompt che guidano l'agente nelle fasi del grafo.
+Ogni prompt è una stringa con dei placeholder che vengono riempiti a runtime 
+dai nodi con i dati (es. user_input).
 """
 
-# ============================================================
-# SCOPING - Notebook 1 Deep Research (User Clarification + Brief Generation)
-# ============================================================
+
+# Scoping
+# Chiedo al modello di capire se la richiesta dell'utente è chiara o no. Nel primo caso
+# l'agente non avrà bisogno di spiegazioni e andrà alla fase del brief. Nel secondo caso
+# quando la richiesta è generica o vaga, l'agente chiederà delle spiegazioni.
+# Il prompt è volutamente permessivo, cioè l'agente di default dovrebbe procedere, tranne
+# nei casi evidenti di richiesta generica (es. Parlami di qualcosa).
 CLARIFICATION_PROMPT = """Sei l'assistente editoriale di un blog automotive. Devi decidere se la
 richiesta dell'utente e' abbastanza CHIARA per pianificare e scrivere un post, oppure se e'
 troppo VAGA e serve un chiarimento.
@@ -39,6 +43,11 @@ IMPORTANTE: se l'utente ha gia' indicato un soggetto, anche ampio, NON chiedere 
 ulteriormente: un tema ampio ma identificabile e' sufficiente per lavorare."""
 
 
+
+# Briefing
+# Trasforma la richiesta (con gli eventuali chiarimenti se presenti)
+# in un brief editoriale, restando strettamente fedele a cio' che ha chiesto l'utente.
+# senza aggiungere cose non richieste.
 BRIEF_PROMPT = """Sei l'assistente editoriale di un blog automotive. Trasforma la richiesta
 dell'utente in un BRIEF editoriale, restando STRETTAMENTE fedele a cio' che ha chiesto.
 
@@ -67,6 +76,14 @@ Nel dubbio, resta MINIMALE e aderente: meglio un brief essenziale e corretto che
 infedele alla richiesta."""
 
 
+
+
+
+# Planning
+# Pianifica una sequenza di post seguendo direttamente il briefing. Necessita del contesto
+# generale del blog, delle linee guida editoriali, della copertura attuale del KG e del brief.
+# passiamo anche l'input dell'utente per evitare che, nel caso in cui l'agente abbia modificato
+# la richiesta nel briefing, questa rimane comunque nel planning.
 PLANNING_PROMPT = """Sei l'editor di un blog automotive. PIANIFICA una sequenza di post.
 
 Contesto del blog:
@@ -117,6 +134,11 @@ e COPERTURA del dominio ed evita argomenti gia' trattati di recente. Nel campo '
 spiega passo-passo perche' questo ordine e questa selezione."""
 
 
+# Research Kickoff
+# Prima fase del ReAct, serve per guidare il modello alla scelta dei tool in base alle esigenze.
+# chiediamo sempre di usare tool specifici (senza invetarsi nomi) e di validare le fonti
+# quindi mai usare conoscenze sue interne.
+
 RESEARCH_KICKOFF = """Devi preparare un post sul tema: "{topic}".
 
 Contesto dal Knowledge Graph (coerenza con i contenuti esistenti, cross-link):
@@ -144,8 +166,15 @@ Guida alla scelta dei tool (scegli in base al tema):
 REGOLA TASSATIVA: usa ESCLUSIVAMENTE i tool dall'elenco fornito, scrivendone il nome ESATTO.
 Non inventare nomi di tool. I documenti locali NON sono un tool: ce li hai gia' qui sopra."""
 
+# Fase draft
+# Prompt che serve per la stesura vera e propria del post. In questo prompt 
+# passiamo il topic, la coerenza dal KG, le fonti recuperate dal research kickoff
+# e cerchiamo di mantenere uno standard di scrittura alto per rendere il post 
+# gradevole e utile per il lettore. Importante è non inventare fonti
+# (quindi mai usare conoscenze sue interne) e di citare esplicitamente le
+# fonti all'interno del post.
 
-DRAFT_PROMPT = """Sei la "penna" del blog automotive "Motori & Dintorni". Scrivi la bozza
+DRAFT_PROMPT = """Sei la "penna" del blog automotive "AutomotiveAI". Scrivi la bozza
 FINALE e pubblicabile dell'articolo sul tema "{topic}" in Markdown.
 
 Coerenza dal Knowledge Graph (collega ai contenuti esistenti, non contraddirli):
@@ -183,6 +212,9 @@ titolo (# Titolo). NON includere il tuo ragionamento: niente "Thought:", "Action
 "Observation:", note di processo, passaggi intermedi, righe di soli trattini o frasi come
 "procedo con la ricerca". L'output deve essere l'articolo pubblicabile e nient'altro."""
 
+# Estrazione KG
+# Dopo che l'articolo e' stato pubblicato viene usato questo prompt
+# per estrarre le informazioni utili da inserire nel KG.
 
 KG_EXTRACTION_PROMPT = """Sei un estrattore di conoscenza per un Knowledge Graph editoriale.
 Dato il testo di un articolo automotive APPROVATO, estrai in modo conciso:

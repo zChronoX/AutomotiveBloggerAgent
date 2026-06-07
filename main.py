@@ -1,4 +1,8 @@
-"""Entry point del Blogger Copilot."""
+"""Entry point dell'AutomotiveBloggerAgent
+Gestisce l'interfaccia a riga di comando (CLI) 
+e, soprattutto, gestisce le interazioni "Human-In-The-Loop" (HITL), 
+cioè i momenti in cui il grafo si mette in pausa per aspettare un input dall'utente.
+"""
 
 import uuid
 from langgraph.types import Command
@@ -7,24 +11,19 @@ from config import check_langsmith_setup
 
 
 def _print_header():
-    print("\n" + "=" * 56)
-    print("  BLOGGER COPILOT - Assistente editoriale automotive")
-    print("=" * 56)
+    print("\n")
+    print("AutomotiveBloggerAgent - Assistente editoriale automotive")
+    print("\n")
     print("Esempi di richiesta:")
-    print("  - 'Scrivi un post sui SUV ibridi 2025'")
-    print("  - 'Suggeriscimi argomenti per i prossimi post'")
+    print("\n")
+    print("Scrivi un post sull'Alfa Romeo Giulia Quadrifoglio")
+    print("Suggeriscimi argomenti per i prossimi post")
     print("Scrivi 'esci' per chiudere.\n")
 
+# Metodo che gestisce la logica HITL da CLI. Quando metto in pausa il
+# grafo di LangGraph, non torna il risultato finale, ma un dizionario speciale.
 
 def _extract_interrupt(result):
-    """
-    Estrae il payload dell'interrupt dal risultato di graph.invoke().
-    Restituisce il dict 'request' completo (con 'action_request' e 'description'),
-    cosi' il chiamante puo' distinguere i due tipi di interrupt:
-      - action 'clarify_request'   -> domanda di chiarimento (FASE 0 scoping)
-      - action 'review_post_draft' -> revisione della bozza (FASE 4 HITL)
-    Restituisce None se non c'e' interrupt.
-    """
     if not isinstance(result, dict):
         return None
     interrupts = result.get("__interrupt__")
@@ -37,7 +36,7 @@ def _extract_interrupt(result):
     except Exception:
         return None
 
-
+# Metodo che estrae il motivo dell'interrupt (se è un chiarificazione per la fase 0 o per hitl fase 5)
 def _interrupt_action(request) -> str:
     """Estrae il nome dell'azione da un request di interrupt."""
     try:
@@ -46,11 +45,10 @@ def _interrupt_action(request) -> str:
         return ""
 
 
-
+#Banale menu CLI per la revisione
 def _ask_review_choice() -> dict:
-    """Menu numerato per la revisione umana. Ritorna il dict di resume per il grafo."""
     print("\n" + "-" * 56)
-    print("[REVISIONE] Come vuoi procedere?")
+    print("Come vuoi procedere?")
     print("  1) Approva  -> salva il post nel Knowledge Graph")
     print("  2) Modifica -> richiedi cambiamenti e rigenera la bozza")
     print("  3) Scarta   -> annulla senza salvare")
@@ -65,13 +63,8 @@ def _ask_review_choice() -> dict:
             return {"type": "ignore"}
         print("Scelta non valida. Inserisci 1, 2 o 3.")
 
-
+# Gestisce la chiarificazione nello scoping.
 def _handle_clarification(request, config):
-    """
-    Gestisce l'interrupt di chiarimento (FASE 0 scoping): mostra la domanda
-    dell'agente, raccoglie la risposta dell'utente e riprende il grafo.
-    Ritorna il nuovo 'result' dopo il resume.
-    """
     question = request.get("description", "Puoi chiarire meglio la tua richiesta?")
     print("\n" + "-" * 56)
     print("[CHIARIMENTO] L'agente ha bisogno di una precisazione:")
@@ -80,19 +73,15 @@ def _handle_clarification(request, config):
     risposta = input("La tua risposta: ").strip()
 
     if not risposta:
-        resume = {"type": "ignore"}  # procedi senza chiarimento
+        resume = {"type": "ignore"}  
     else:
         resume = {"type": "response", "args": risposta}
 
     return graph.invoke(Command(resume=resume), config)
 
-
+# Gestisce la parte di revisione della bozza. Se ho scelto la modifica allora si riscrive l'articolo
+# altrimenti il grafo non viene più fermato.
 def _run_review_loop(config):
-    """
-    Gestisce il ciclo di revisione: finche' il grafo si ferma sulla review,
-    mostra la bozza, chiede la scelta e riprende con Command(resume=...).
-    Termina quando l'utente approva (salvataggio KG) o scarta.
-    """
     while True:
         state = graph.get_state(config)
         if not state.next:
@@ -102,11 +91,11 @@ def _run_review_loop(config):
         scelta = _ask_review_choice()
 
         if scelta["type"] == "accept":
-            print("\n[INFO] Approvazione ricevuta: aggiornamento del Knowledge Graph...")
+            print("\nApprovazione ricevuta: aggiornamento del Knowledge Graph.")
         elif scelta["type"] == "ignore":
-            print("\n[INFO] Bozza scartata: nessun salvataggio.")
+            print("\nBozza scartata: nessun salvataggio.")
         else:
-            print("\n[INFO] Applico le modifiche e rigenero la bozza...")
+            print("\nApplico le modifiche e rigenero la bozza")
 
         # Riprende il grafo iniettando la risposta dell'utente nell'interrupt
         result = graph.invoke(Command(resume=scelta), config)
@@ -124,16 +113,16 @@ def _run_review_loop(config):
     final = graph.get_state(config).values
     status = final.get("status", "")
     if status == "completed":
-        print("\n[SUCCESSO] Post approvato e Knowledge Graph aggiornato.")
+        print("\nPost approvato e Knowledge Graph aggiornato.")
     elif status == "discarded":
-        print("\n[INFO] Operazione conclusa: bozza scartata.")
+        print("\nOperazione conclusa: bozza scartata.")
     else:
-        print(f"\n[INFO] Processo concluso (stato: {status or 'n/d'}).")
+        print(f"\nProcesso concluso (stato: {status or 'n/d'}).")
 
 
 def run_agent():
     _print_header()
-    check_langsmith_setup()  # avvisa se il tracing LangSmith e' attivo o meno
+    check_langsmith_setup()  
 
     while True:
         user_input = input("\n[TU]: ").strip()
@@ -145,23 +134,21 @@ def run_agent():
 
         # Ogni richiesta in un thread separato (lo stato e' isolato per conversazione)
         config = {"configurable": {"thread_id": str(uuid.uuid4())}}
-        print("\n[INFO] L'agente sta analizzando la richiesta...")
+        print("\nL'agente sta analizzando la richiesta.")
 
         try:
             result = graph.invoke({"user_input": user_input}, config)
         except Exception as e:
-            print(f"\n[ERRORE] Esecuzione del grafo fallita: {e}")
+            print(f"\nEsecuzione del grafo fallita: {e}")
             continue
 
-        # FASE 0 - Gestione di eventuali CHIARIMENTI (anche piu' giri).
-        # Finche' il grafo si ferma su un interrupt di tipo 'clarify_request',
-        # dialoghiamo con l'utente e riprendiamo.
+        # Gestisco più chiarimenti (abbiamo un tetto massimo di 2)
         request = _extract_interrupt(result)
         while request and _interrupt_action(request) == "clarify_request":
             result = _handle_clarification(request, config)
             request = _extract_interrupt(result)
 
-        # Caso A: il grafo si e' fermato per la revisione della bozza (FASE 4 HITL)
+        # Caso in cui il grafo si ferma per la revisione
         if request and _interrupt_action(request) == "review_post_draft":
             print("\n" + "=" * 56)
             print("  BOZZA PRONTA PER LA REVISIONE")
@@ -169,12 +156,12 @@ def run_agent():
             print(f"\n{request.get('description', '')}\n")
             _run_review_loop(config)
         else:
-            # Caso B: nessuna revisione (es. solo suggerimento di topic) -> mostra l'output
+            # Quando non serve la revisione (solo suggerimenti richiesti e non post)
             messages = result.get("messages", []) if isinstance(result, dict) else []
             if messages:
-                print(f"\n[RISPOSTA DELL'AGENTE]:\n{messages[-1].content}\n")
+                print(f"\nSuggerimenti dell'agente:\n{messages[-1].content}\n")
             else:
-                print("\n[INFO] Operazione conclusa.")
+                print("\nOperazione conclusa.")
 
 
 if __name__ == "__main__":

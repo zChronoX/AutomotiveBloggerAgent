@@ -1,27 +1,19 @@
 """
-Configurazione e inizializzazione del vector store (ChromaDB).
-
-I TRE parametri (PERSIST_DIR, COLLECTION_NAME, EMBEDDING_MODEL) sono il contratto
-condiviso tra ingestione (rag/ingest.py) e retrieval (rag/retriever.py).
-Se ne modifichi uno, aggiorna entrambi (ora basta farlo qui).
+Modulo di configurazione del RAG, dove definisco
+tutti i parametri e inizializzo gli oggetti
 """
 
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 
-# Silenzia il warning innocuo "embeddings.position_ids UNEXPECTED" che compare al
-# caricamento di all-MiniLM-L6-v2: e' dovuto a un campo obsoleto nel checkpoint del
-# modello rispetto alla versione di transformers, NON indica un problema (il modello
-# funziona correttamente). Abbassiamo il livello di logging per non sporcare l'output.
+# Silenzio i warning innocui come :"embeddings.position_ids UNEXPECTED"
 import logging
 import warnings
 logging.getLogger("transformers").setLevel(logging.ERROR)
 logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore", message=".*position_ids.*")
 
-# ============================================================
-# PARAMETRI CONDIVISI tra ingest e retriever
-# ============================================================
+# Parametri condivisi
 PERSIST_DIR = "./chroma_db"
 COLLECTION_NAME = "blog_documents"
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"

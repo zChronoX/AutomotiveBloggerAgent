@@ -1,19 +1,20 @@
 """
-Query di lettura del Knowledge Graph.
-Funzioni "core" (Python puro) richiamabili in modo DETERMINISTICO dal grafo,
+Modulo di letture del Knowledge Graph senza modificarlo.
+Funzioni chiamate in modo deterministico dal grafo,
 senza dipendere dal fatto che il modello scelga il tool giusto.
 
-Tracciate con @traceable: nella waterfall di LangSmith compaiono come step dedicati
+Tracciate con @traceable così nella waterfall di LangSmith compaiono come step dedicati
 con il topic in input e il contesto KG in output.
 
-Codice estratto da kg_tool.py (sezione FUNZIONI CORE).
+Tutti i metodi usano un try/except in modo da tornare stringhe/liste vuote
+in caso ddi malfunzionamento, così il grafo non crasha.
 """
 
 from .client import run_read, fmt_date
 from .semantic import best_semantic_match
 
-# @traceable rende le query KG visibili nella waterfall. Import difensivo no-op
-# se langsmith non e' disponibile.
+# @traceable rende le query KG visibili nella waterfall di LangSmith.
+# try/except serve ad evitare errori se langsmith non è disponibile (o non installato).
 try:
     from langsmith import traceable
 except Exception:
@@ -24,9 +25,8 @@ except Exception:
             return d_args[0]
         return _wrap
 
-
+# Query che prende tutti i topic del KG per poi fare il matching semantico
 def _all_topic_names() -> list[str]:
-    """Tutti i nomi di topic presenti nel KG (per il matching semantico)."""
     try:
         rows = run_read("MATCH (t:Topic) RETURN t.name AS name")
         return [r["name"] for r in rows if r.get("name")]
@@ -34,14 +34,12 @@ def _all_topic_names() -> list[str]:
         return []
 
 
+
+# Applico la logica di risoluzione semantica del topic:
+# lo normalizzo, prendo tutti i topic con la funzione sopra
+# confronto tramite embeddings, se torna un valore sopra i 0.75
+# allora lo considero lo stesso topic, altrimenti considero il nuovo topic.
 def resolve_topic(topic: str) -> str:
-    """
-    Risolve il topic cercato verso un topic ESISTENTE nel KG tramite similarita'
-    SEMANTICA (embedding). Se trova un topic gia' presente abbastanza simile,
-    restituisce quel nome canonico (cosi' le query agganciano i post esistenti
-    anche se il soggetto e' formulato diversamente). Altrimenti restituisce il
-    topic normalizzato originale (minuscolo), trattandolo come nuovo.
-    """
     if not topic:
         return ""
     key = topic.lower().strip()
@@ -50,12 +48,15 @@ def resolve_topic(topic: str) -> str:
     return match if match else key
 
 
+
+# Metodo usato dal planner per vedere quali sono
+# stati i temi trattati, e evita di proporne altri.
+# Nella seconda query, non ci sono le "frecce", significa che
+# la sto eseguendo in entrambe le direzioni. Mentre nella 
+# prima la freccia è verso topic, perché mi serve trovare
+# tutti i post che fanno riferimento a quel topic.
 @traceable(run_type="retriever", name="kg_topic_history")
 def kg_topic_history(topic: str) -> str:
-    """
-    Cronologia dei post su un topic (+ topic correlati), dal piu' recente.
-    Usata in: fase di pianificazione (evitare doppioni) e drafting (coerenza).
-    """
     posts_q = """
     MATCH (t:Topic {name: $topic})<-[:COVERS_TOPIC]-(p:Post)
     RETURN p.title AS title, p.category AS category, p.created_at AS created_at
@@ -83,13 +84,15 @@ def kg_topic_history(topic: str) -> str:
         return f"Errore durante la lettura di Neo4j: {str(e)}"
 
 
+
+# Metodo che torna la panoramica di tutti i topic nel KG, usata anche questa
+# dal planner per la gap-analysis.
+# In questo caso, uso OPTIONAL MATCH, in cui a differenza del MATCH classico
+# non scarto i topic che non hanno post, ma li includo in post_count. E questo
+# mi serve proprio per capire i topic senza post e quindi il gap di copertura che
+# serve al planner per sapere cosa scrivere.
 @traceable(run_type="retriever", name="kg_topics_overview")
 def kg_topics_overview() -> str:
-    """
-    Panoramica di TUTTI i topic con numero di post e data dell'ultimo post,
-    ordinati dal piu' trascurato (i topic mai coperti compaiono per primi = gap).
-    Usata in: fase di pianificazione per individuare lacune e argomenti vecchi.
-    """
     query = """
     MATCH (t:Topic)
     OPTIONAL MATCH (t)<-[:COVERS_TOPIC]-(p:Post)
@@ -99,12 +102,12 @@ def kg_topics_overview() -> str:
     try:
         rows = run_read(query)
         if not rows:
-            return "Il Knowledge Graph e' vuoto: nessun topic registrato. Qualsiasi argomento e' nuovo."
+            return "Il Knowledge Graph e' vuoto: nessun topic registrato."
 
         lines = ["Panoramica della copertura editoriale (dal piu' trascurato):"]
         for r in rows:
             if r["post_count"] == 0:
-                lines.append(f"- {r['topic']}: MAI trattato (gap di copertura).")
+                lines.append(f"- {r['topic']}: Mai trattato, possibile gap di copertura.")
             else:
                 lines.append(
                     f"- {r['topic']}: {r['post_count']} post, ultimo il {fmt_date(r['last_post'])}."
@@ -113,6 +116,13 @@ def kg_topics_overview() -> str:
     except Exception as e:
         return f"Errore durante la lettura di Neo4j: {str(e)}"
 
+
+
+
+# Contesto editoriale completo per la stesura (quindi usato dal drafting_node e research_agent)
+# La query raccoglie tutto ciò che il KG sa su uno specifico topic, titoli dei post (per evitare ripetizioni)
+# le claims già affermate (per coerenza), le fonti usate (per il riuso o riferimenti tra post) e i topic correlati (per cross-link).
+# collect(DISTINCT...) serve pre tornare una lista senza duplicati (se avessi un post con 3 claim e 2 fonti, avrei 6 valori ripetuti).
 
 @traceable(run_type="retriever", name="kg_topic_context")
 def kg_topic_context(topic: str) -> str:
@@ -136,7 +146,7 @@ def kg_topic_context(topic: str) -> str:
         resolved = resolve_topic(topic)
         rows = run_read(query, topic=resolved)
         if not rows:
-            return f"Nessun contesto nel KG per '{topic}': e' un argomento nuovo, nessun vincolo di coerenza."
+            return f"Nessun contesto nel KG per '{topic}': e' un argomento nuovo."
 
         r = rows[0]
         posts = [x for x in r["posts"] if x]
@@ -145,7 +155,7 @@ def kg_topic_context(topic: str) -> str:
         related = [x for x in r["related"] if x]
 
         if not any([posts, claims, sources, related]):
-            return f"Nessun contesto nel KG per '{topic}': e' un argomento nuovo, nessun vincolo di coerenza."
+            return f"Nessun contesto nel KG per '{topic}': e' un argomento nuovo."
 
         lines = [f"Contesto del KG per il topic '{topic}' (usalo per coerenza e link interni):"]
         if posts:
@@ -161,6 +171,11 @@ def kg_topic_context(topic: str) -> str:
         return f"Errore durante la lettura di Neo4j: {str(e)}"
 
 
+
+# Metodo che torna solo i nomi dei topic correlati, serve per la query expansion del K-RAG
+# La query expansion mi serve per ottenere più risultati legati al topic di partenza.
+# Prendendo l'esempio dell'aerodinamica attiva, per espanderla chiedo al KG i topic collegati
+# espando la query aggiungendo i termini dei topic e poi la eseguo nel RAG.
 @traceable(run_type="retriever", name="kg_related_topics")
 def kg_related_topics(topic: str) -> list[str]:
     """

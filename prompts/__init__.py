@@ -1,4 +1,4 @@
-"""Modulo prompt: tutti i template centralizzati."""
+"""Modulo prompt: tutti i template centralizzati (eccetto qualcuno specifico)."""
 
 from .system_prompts import blogger_system_prompt, default_background, default_editorial_guidelines
 from .agent_prompts import PLANNING_PROMPT, RESEARCH_KICKOFF, DRAFT_PROMPT

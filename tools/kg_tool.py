@@ -1,8 +1,6 @@
 """
-Tool del Knowledge Graph esposti all'agente (ReAct).
-
-Wrapper snelli: ogni @tool delega la logica a knowledge_graph/.
-Le descrizioni dei tool sono centralizzate in prompts/tool_prompts.py.
+File che funge da "wrapper" per LangChain. Unisce la logica del KG al formato
+di tool atteso da LangChain. 
 """
 
 from langchain_core.tools import tool

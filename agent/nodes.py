@@ -1,17 +1,48 @@
 """
-Funzioni nodo del grafo LangGraph — le 5 fasi dell'agente blogger.
 
-Ogni funzione corrisponde a un nodo nel grafo e implementa un passo del flusso:
-  FASE 1 - kg_context_node:      KG interrogato per gap analysis (Topic Suggestion)
-  FASE 2 - planner_node:         Planning strutturato (PlanningSchema)
-           suggest_topics_node:   Presentazione suggerimenti (senza stesura)
-  FASE 3 - research_agent_node:  Ciclo ReAct + Self-RAG
-           forced_search_node:    Guardrail verifica fonti
-           rewrite_question_node: Riformulazione query (Self-RAG)
-           resilient_tool_node:   Esecuzione tool con gestione errori
-  FASE 4 - drafting_node:        Stesura con coerenza KG e citazioni (K-RAG)
-           review_node:           Human-in-the-loop (interrupt/Command)
-  FASE 5 - update_kg_node:       Pubblicazione (copertina + SEO + salvataggio KG)
+Cervello dell'applicazione, contiene le definizioni di tutti i nodi del grafo di LangGraph.
+Ogni nodo è un funzione di python che prende lo stato corrente come input, fa l'operazione 
+specifica e restituisce il nuovo stato, per poi essere passato ai nodi successivi.
+
+Abbiamo un totalità di 6 fasi (FASE 0 - FASE 5)
+
+FASE 0 - Scoping: questa fase si ocupa di chiarire le richieste ambigue dell'utente. In poche parole 
+l'agente per evitare di scegliere un topic casuale, chiede maggiori informazioni all'utente, solo
+nel caso in cui la richiesta non è vaga. Altrimenti si fa direttamente alla Fase 1. Si usa
+lo HITL (Human-in-the-loop) per permettere all'utente di rispondere.
+
+FASE 1 - KG: questa fase si occupa di interrogare il KG per capire quali sono i topic che potrebbero
+interessare il pubblico del blog. Viene usata la tool kg_topics_overview() per ottenere i topic più popolari, 
+nonchè viene effetuata una gap analysis per capire quali sono i topic che non sono stati coperti dal blog.
+Successivamente si formula una breve sintesi dei topic che potrebbero interessare l'utente.
+Usa anche il tool RSS per capire le notizie fresce di giornata.
+
+FASE 2 - Planning e suggerimenti: questa fase si occupa di pianificare la stesura dell'articolo. 
+Viene creato il piano editoriale, in cui al modello viene passato il Brief (frutto dello scoping + chiarimenti)
+la lista dei gap del KG e i trend RSS.
+
+FASE 3 - Research (ReAct + Self-RAG): Fase più importante del ciclo di vita dell'agente. 
+Rappresenta il punto in cui l'agente ragiona, in base alla richiesta ottenuta ed esegue scelte precise.
+Inizialmente viene chiesto al KG il contsto del topic, dei topic correlati e usa i correlati
+per espandere la query verso ChromaDB per ottenere i chunk dei documenti utili.
+Dopo di che, passa tutto al ReAct, ini cui il modello decide in autonomia che tool usare
+in base al contesto e come definire i parametri dei vari tool per ottere le informazioni necessarie per i post.
+
+Questa fase viene richiamata anche quando c'è una revisione, nel caso in cui l'utente decide di aggiungere qualcosa
+ad esempio in una recensione anche il confronto con un modello specifico, si torna a questa fase per raccogliere più informazioni.
+Inoltre vengono valutate anche la pertinenza delle fonti raccolte, nel caso in cui non lo sono, viene rifatta una ricerca.
+
+
+FASE 4 - Drafting: Fase quasi finale in cui si prendono tutte le "raw_notes" quindi le informazioni
+raccolte dai vari tool (web, RAG, ecc), il contesto del KG e vengono passati al modello per la stesura
+dell'articolo finale.
+Alla fine di questa fase viene presentata la bozza all'utente che decide se approvarla o riscriverla.
+La riscrittura, differentemente dalla fase sopra, agisce solo sul testo e non sulle fonti. Ad esempio
+se chiedo di scrivere con un lessico più semplice, non ho bisogno di tornare nella fase di ricerca sopra.
+
+FASE 5 - Aggiornamento del KG: Una volta che la bozza rispetta le specifiche dell'utente e questo
+la approva, viene salvata nel KG, collegata al topic e vengono generate le immagini e l'analisi SEO.
+
 """
 
 import re
@@ -38,18 +69,18 @@ from prompts.agent_prompts import (
 )
 from utils import should_grade_tool
 from tools.base import get_all_tools, get_react_tools
-# Funzioni pure del KG: chiamate in modo DETERMINISTICO nelle fasi obbligatorie
+# Funzioni pure del KG chiamate in modo deterministico nelle fasi obbligatorie
 from knowledge_graph.queries import kg_topics_overview, kg_topic_context, kg_related_topics
 from knowledge_graph.updater import update_kg_data
-# RAG: retrieval deterministico per il K-RAG (both KG and RAG)
+# Retrieval deterministico per il K-RAG (sia KG che RAG)
 from rag.retriever import retrieve_local
-# Tool di arricchimento, eseguiti deterministicamente alla pubblicazione (post-approvazione)
+# Tool di arricchimento eseguiti deterministicamente alla pubblicazione (post-approvazione)
 from tools.image_tool import generate_cover_image
 from tools.seo_tool import analyze_seo_and_readability
 
 config = Configuration()
-tools = get_all_tools()                  # tutti i tool (per lookup nel resilient_tool_node)
-react_tools = get_react_tools()          # solo i 5 tool situazionali (per il bind_tools)
+tools = get_all_tools()                  # tutti i tool per lookup nel resilient_tool_node
+react_tools = get_react_tools()          # solo i 5 tool situazionali per il bind_tools
 llm_with_tools = llm.bind_tools(react_tools)
 tools_by_name = {t.name: t for t in tools}
 
@@ -59,9 +90,7 @@ KG_UPDATE_TOOL_NAME = "update_knowledge_graph"
 MAX_CLARIFICATIONS = 2
 
 
-# ============================================================
-# FASE 0 - SCOPING: clarification + brief
-# ============================================================
+# Fase di Scoping (FASE 0: Scoping + Brief)
 def clarification_node(state: dict):
     """
     Valuta con structured output se la richiesta dell'utente e' chiara o vaga.
@@ -72,19 +101,22 @@ def clarification_node(state: dict):
     user_input = state.get("user_input") or (msgs[-1].content if msgs else "")
     clarif_count = state.get("clarification_count") or 0
 
-    # Se abbiamo gia' raggiunto il limite di chiarimenti, procediamo comunque (no loop infinito)
+    # Se abbiamo gia' raggiunto il limite di chiarimenti, procediamo comunque (evito i loop infinit)
     if clarif_count >= MAX_CLARIFICATIONS:
         print("[FASE 0 - SCOPING] Limite chiarimenti raggiunto: procedo con quanto ho.")
         return {"user_input": user_input, "status": "scoped"}
 
-    # RETE DI SICUREZZA DETERMINISTICA: alcune richieste sono palesemente generiche
-    # ("scrivimi qualcosa", "fai tu", ...). Su queste forziamo SEMPRE il chiarimento,
-    # senza dipendere dal giudizio del modello 3B (che oscilla troppo). Per i casi
-    # sfumati lasciamo invece decidere il modello con structured output.
-    # IMPORTANTE: la applichiamo solo al PRIMO passaggio. Se l'utente ha gia' fornito un
-    # chiarimento (clarif_count > 0), NON la rivalutiamo (altrimenti la richiesta originale
+
+    # Alcune richieste sono palesemente generiche quindi forziamo sempre il chiarimento
+    # a prescindere da cosa il modello vuole fare. Questo "guardrail" è stato inserito
+    # per evitare che il modello proceda con una richiesta vaga e non chiarisca per niente.
+    # Essendo un modello piccolo, andiamo sul sicuro in determinati casi, per altri
+    # facciamo decidere a lui nella speranza che faccia la cosa giusta.
+    # Questo guardrail è applicato solo al primo passaggio, difatti se l'utente ha già
+    # fornito un chiarimento, non viene rivalutato (altrimenti la richiesta originale
     # generica la farebbe riscattare, stampando messaggi fuorvianti): lasciamo decidere il
-    # modello sulla richiesta ormai arricchita.
+    # modello sulla richiesta ormai arricchita, ma non dovrebbe andare così
+    # perché solitamente il modello tende a non chiedere quasi mai.
     forced_vague = is_clearly_vague(user_input) if clarif_count == 0 else False
 
     if forced_vague:
@@ -92,7 +124,7 @@ def clarification_node(state: dict):
         decision_question = (
             "La tua richiesta e' un po' generica. Su cosa ti piacerebbe scrivere? "
             "Per esempio: la recensione di un modello specifico (auto o moto), una guida "
-            "tecnica (es. manutenzione, ADAS, batterie), oppure un confronto tra due veicoli?"
+            "tecnica (es. manutenzione, freni, motorizzazioni, batterie), oppure un confronto tra due veicoli?"
         )
         decision_verification = ""
         decision_reason = "deterministica"
@@ -105,12 +137,12 @@ def clarification_node(state: dict):
             decision_verification = decision.verification
             decision_reason = "modello"
         except Exception as e:
-            # Se lo structured output fallisce, non blocchiamo il flusso: procediamo
+            # Se lo structured output fallisce, non blocchiamo il flusso
             print(f"[FASE 0 - SCOPING] Clarification non riuscita ({e}): procedo senza chiarimenti.")
             return {"user_input": user_input, "status": "scoped"}
 
     if decision_need:
-        # Interrupt HITL: stesso meccanismo della review, distinto dal campo 'action'
+        # Interrupt HITL che usa lo stesso meccanismo della revisione 
         request = {
             "action_request": {
                 "action": "clarify_request",
@@ -125,71 +157,65 @@ def clarification_node(state: dict):
         answer = interrupt(request)
         rtype = answer.get("type") if isinstance(answer, dict) else None
 
-        # A questo punto l'interrupt si e' risolto: logghiamo la decisione UNA volta sola
+        # A questo punto l'interrupt si e' risolto: logghiamo la decisione una volta sola
         # (il codice sopra l'interrupt si riesegue alla ripresa, qui sotto no).
         reason_lbl = "regola deterministica" if decision_reason == "deterministica" else "valutazione del modello"
-        print(f"[FASE 0 - SCOPING] Richiesta giudicata vaga ({reason_lbl}): chiesto chiarimento (HITL).")
+        print(f"\nRichiesta giudicata vaga ({reason_lbl}): chiesto chiarimento.")
 
         if rtype == "ignore":
             # L'utente non vuole chiarire: procediamo con la richiesta originale
-            print("[FASE 0 - SCOPING] Nessun chiarimento fornito: procedo con la richiesta originale.")
+            print("\nNessun chiarimento fornito: procedo con la richiesta originale.")
             return {"user_input": user_input, "status": "scoped"}
 
         # L'utente ha risposto: arricchiamo lo user_input col chiarimento e ri-valutiamo
         extra = (answer.get("args", "") if isinstance(answer.get("args"), str)
                  else str(answer.get("args", "")))
         enriched = f"{user_input}\nChiarimento dell'utente: {extra}"
-        print("[FASE 0 - SCOPING] Chiarimento ricevuto, rivaluto la richiesta.")
+        print("\nChiarimento ricevuto, rivaluto la richiesta.")
         return {
             "user_input": enriched,
             "clarification_count": clarif_count + 1,
             "status": "clarifying",
-            "reasoning_trace": trace(state, f"FASE 0 - Chiarimento richiesto e ricevuto: {extra[:120]}"),
+            "reasoning_trace": trace(state, f"\nChiarimento richiesto e ricevuto: {extra[:120]}"),
         }
 
     # Richiesta chiara: registriamo la verifica e proseguiamo
-    print(f"[FASE 0 - SCOPING] Richiesta chiara: {decision_verification[:100]}")
+    print(f"\nRichiesta chiara: {decision_verification[:100]}")
     return {
         "user_input": user_input,
         "status": "scoped",
-        "reasoning_trace": trace(state, f"FASE 0 - Richiesta chiara: {decision_verification[:120]}"),
+        "reasoning_trace": trace(state, f"\nRichiesta chiara: {decision_verification[:120]}"),
     }
 
+# Trasforma la richiesta (eventualmente chiarita) in un brief editoriale strutturato.
 
 def brief_node(state: dict):
-    """
-    Trasforma la richiesta (eventualmente chiarita) in un BRIEF editoriale strutturato.
-    """
     user_input = state.get("user_input", "")
     briefer = llm.with_structured_output(ResearchBrief)
     try:
         brief = briefer.invoke([SystemMessage(content=BRIEF_PROMPT.format(user_input=user_input))])
         brief_text = (f"Tema: {brief.refined_topic}\nTaglio: {brief.angle}\nNote: {brief.notes}")
-        print(f"[FASE 0 - BRIEF] Brief generato. Tema: {brief.refined_topic}")
+        print(f"\nBrief generato. Tema: {brief.refined_topic}")
     except Exception as e:
         brief_text = ""
-        print(f"[FASE 0 - BRIEF] Brief non generato ({e}): procedo con la richiesta grezza.")
+        print(f"\nBrief non generato ({e}): procedo con la richiesta grezza.")
 
     return {
         "research_brief": brief_text,
         "status": "briefed",
-        "reasoning_trace": trace(state, "FASE 0 - Brief editoriale strutturato generato."),
+        "reasoning_trace": trace(state, "\nBrief editoriale strutturato generato."),
     }
 
 
-# ============================================================
-# FASE 1 - KG: Topic suggestion (gap analysis)
-# ============================================================
+# Fase 1: KG Topic Suggestion e gap analysis
 def kg_context_node(state: dict):
-    """Interroga il KG (deterministico). Per le richieste di suggerimento, recupera anche i trend RSS."""
     msgs = state.get("messages", [])
     user_input = state.get("user_input") or (msgs[-1].content if msgs else "")
     overview = kg_topics_overview()
-    print("\n[FASE 1 - KG] Panoramica di copertura recuperata dal Knowledge Graph.")
+    print("\nPanoramica di copertura recuperata dal Knowledge Graph.")
 
     # Recupero trend SOLO per le richieste di SUGGERIMENTO (non per la scrittura di post).
-    # Quando l'utente chiede "scrivi un post sulla TRK502X" i trend non servono al planner
-    # (il primo topic DEVE essere quello richiesto, per la regola di priorita').
+    # Quando l'utente chiede di scrivere un post su qualcosa di preciso i trend non servono al planner
     # Quando chiede "suggeriscimi argomenti" i trend sono essenziali: permettono al planner
     # di proporre temi basati sulle notizie reali invece che dalla sua conoscenza interna.
     trends = ""
@@ -197,27 +223,29 @@ def kg_context_node(state: dict):
         trend_tool = tools_by_name.get("fetch_automotive_trends")
         if trend_tool:
             try:
-                print("[FASE 1 - RSS] Recupero notizie fresche dal feed RSS...")
+                print("\nRecupero notizie fresche dal feed RSS")
                 trends_result = str(trend_tool.invoke({"query": "novità automotive"}))
                 if trends_result and "errore" not in trends_result.lower()[:50]:
                     trends = trends_result
             except Exception as e:
-                print(f"[FASE 1 - RSS] Feed RSS non disponibile: {e}")
+                print(f"\nFeed RSS non disponibile: {e}")
 
     return {
         "user_input": user_input,
         "kg_summary": overview,
         "trends_summary": trends,
         "status": "kg_context_loaded",
-        "reasoning_trace": trace(state, "FASE 1 - KG interrogato per gap/ripetizioni."),
+        "reasoning_trace": trace(state, "\nKG interrogato per gap/ripetizioni."),
     }
 
 
-# ============================================================
-# FASE 2 - Planning strutturato
-# ============================================================
+# Fase 2: Planning strutturato
+# Il planner trasforma il brief in un piano strutturato di argomenti.
+# Costringo il modello a rispondere con una struttura precisa che è quella del Planning.
+# Passo il prompt al modello e converto i risultati del modello in dizionari Pythnon.
+# Prendo il primo topic come argomento principale e il resto come argomenti secondari.
+
 def planner_node(state: dict):
-    """Genera una sequenza di post giustificata e KG-aware; popola planning_info."""
     user_input = state.get("user_input", "")
     kg_overview = state.get("kg_summary", "")
     trends = state.get("trends_summary", "") or "Nessun trend disponibile."
@@ -234,34 +262,30 @@ def planner_node(state: dict):
     )
     try:
         plan = planner_llm.invoke([SystemMessage(content=prompt)])
-        # Convertiamo subito in dict serializzabili (evita il warning PostPlan del checkpointer)
+        # Convertiamo subito in dizionari
         planned = [p.model_dump() for p in plan.planned_posts]
         reasoning = plan.reasoning
     except Exception as e:
         planned, reasoning = [], f"(Pianificazione strutturata non riuscita: {e})."
 
     current_topic = planned[0]["topic"] if planned else (user_input or "Argomento automotive")
-    print(f"\n[FASE 2 - PLANNING] {len(planned)} post pianificati. Tema scelto: {current_topic}")
+    print(f"\n{len(planned)} post pianificati. Tema scelto: {current_topic}")
     return {
         "planning_info": planned,
         "current_topic": current_topic,
         "status": "planned",
-        "reasoning_trace": trace(state, f"FASE 2 - Piano editoriale (KG-aware). {reasoning}"),
+        "reasoning_trace": trace(state, "\nPiano editoriale generato."),
     }
 
 
+# Metodo usato quando l'utente vuole un suggerimento. Sfrutto il planner node per
+# arricchire i suggerimenti di post da scrivere, insieme alle news del tool RSS.
 def suggest_topics_node(state: dict):
-    """Modalita' suggerimento: presenta il piano arricchito con trend attuali.
-
-    I trend sono gia' stati recuperati in kg_context_node e passati al planner,
-    quindi i suggerimenti sono GIA' informati dalle notizie reali. Qui li
-    appendiamo alla risposta per dare visibilita' anche all'utente.
-    """
     plan = state.get("planning_info") or []
     trends = state.get("trends_summary", "")
 
     if plan:
-        out = ["Proposta di calendario editoriale (gap-aware):\n"]
+        out = ["Proposta di calendario editoriale:\n"]
         for i, p in enumerate(plan, 1):
             out.append(f"{i}. [{p['post_category']}] {p['topic']}\n   Motivazione: {p['justification']}")
         text = "\n".join(out)
@@ -269,7 +293,7 @@ def suggest_topics_node(state: dict):
         text = "Non sono riuscito a pianificare. Specifica meglio l'area tematica."
 
     if trends:
-        text += f"\n\nNotizie fresche dalle testate automotive (feed RSS):\n{trends}"
+        text += f"\n\nNotizie estratte dal feed RSS:\n{trends}"
     return {
         "messages": [AIMessage(content=text)],
         "status": "topics_suggested",
@@ -277,41 +301,34 @@ def suggest_topics_node(state: dict):
     }
 
 
-# ============================================================
-# FASE 3 - ReAct + Self-RAG
-# ============================================================
-def research_agent_node(state: dict):
-    """ReAct: ragiona e seleziona dinamicamente i tool per il tema scelto.
+# Fase 3: ReAct + Self-RAG
 
-    Al primo ingresso esegue il K-RAG in modo DETERMINISTICO:
-    - recupera il contesto dal Knowledge Graph (coerenza, cross-link);
-    - usa i topic correlati del KG per ESPANDERE la query di retrieval (query expansion);
-    - recupera i documenti locali (RAG) con la query espansa.
-    Entrambe le fonti (KG + RAG) vengono iniettate nel contesto, soddisfacendo il
-    requisito "use of both structured knowledge (KG) and unstructured documents (RAG)".
-    Il modello sceglie poi liberamente, via ReAct, i tool SITUAZIONALI (web, specs, ecc.).
-    """
+
+# Funzione iù complessa del ReAct. Il suo compito è capire i tool da usare per trovare
+# le info che servono per il topic. Tira fuori dal KG le informazioni storiche e i topic correlati
+# viene fatta la query expansion a partire dalle info del KG per prendere documenti locali (RAG)
+# Per questo si parla di Knowldge RAG.
+def research_agent_node(state: dict):
+
     msgs = state.get("messages", [])
     # Al primo ingresso prepariamo system prompt + kickoff di ricerca col contesto K-RAG
     if not any(isinstance(m, ToolMessage) for m in msgs) and state.get("status") == "planned":
         topic = state.get("current_topic", "")
-        # Chiave canonica per interrogare il KG: derivata dal TEMA PULITO (current_topic dal
-        # planner), NON dall'user_input grezzo che puo' contenere il dialogo di chiarimento.
+        # Chiave canonica per interrogare il KG che deriva dal tema principale del brief
         topic_key = canonical_topic(topic) or canonical_topic(state.get("research_brief", ""))
+
+        # Contesto estratto dal KG
         kg_ctx = kg_topic_context(topic_key)
 
-        # --- QUERY EXPANSION dal KG ---
-        # Prendiamo i topic correlati dal Knowledge Graph e li accodiamo alla query
-        # di retrieval, per espanderla (requisito: "use the KG to expand/refine queries").
+        # Query expansion del topic. Prendiamo i topic correlati dal Knowledge Graph e li accodiamo alla query
+        # per espanderla.
         related = kg_related_topics(topic_key)
         expanded_query = topic
         if related:
             expanded_query = f"{topic} {' '.join(related)}"
-            print(f"[FASE 3 - K-RAG] Query espansa col KG: +{len(related)} topic correlati.")
+            print(f"\nQuery espansa col KG: +{len(related)} topic correlati.")
 
-        # --- RAG DETERMINISTICO ---
-        # I documenti locali sono curati e in italiano. Li recuperiamo sempre con la
-        # query espansa (in italiano), senza dipendere dalla scelta del modello.
+        # Recuperiamo i documenti tramite RAG con la query espansa. I documenti locali sono in italiano.
         local_docs = retrieve_local(expanded_query)
         has_local = (local_docs
                      and "nessun" not in local_docs.lower()[:30]
@@ -327,12 +344,12 @@ def research_agent_node(state: dict):
                 f"{'; '.join(doc_refs)}" if doc_refs
                 else "recuperati frammenti dai documenti locali"
             )
-            print("[FASE 3 - K-RAG] Documenti locali recuperati e iniettati nel contesto.")
+            print("\nDocumenti locali recuperati e iniettati nel contesto.")
         else:
             local_block = "Nessun documento locale pertinente per questo tema (procedi con la ricerca web)."
             local_sources = []
             rag_observation = "nessun documento locale pertinente trovato nel database vettoriale"
-            print("[FASE 3 - K-RAG] Nessun documento locale rilevante per questo topic.")
+            print("\nNessun documento locale rilevante per questo topic.")
 
         tools_desc = "\n".join([f"- {t.name}: {t.description}" for t in react_tools])
         sys = blogger_system_prompt.format(
@@ -340,20 +357,20 @@ def research_agent_node(state: dict):
             background=default_background,
             editorial_guidelines=default_editorial_guidelines,
         )
-        # Il kickoff riceve KG context + documenti locali gia' recuperati (K-RAG completo)
+        # Viene costruito un kickoff che inserisce nel prompt sia il context del KG che i documenti locali.
+        # Così il modello conosce già elementi storici e factual del topic prima di iniziare a usare i tool.
         kickoff = RESEARCH_KICKOFF.format(topic=topic, kg_context=kg_ctx, local_docs=local_block)
         base = [SystemMessage(content=sys), HumanMessage(content=kickoff)]
         response = llm_with_tools.invoke(base)
 
-        # --- REASONING TRACE in formato ReAct (Thought -> Action -> Observation) ---
-        # Documenta esplicitamente i passi K-RAG deterministici come richiesto dalle
-        # specifiche ("explicit reasoning steps", "justification of tool usage").
+        # Traccia del ragionamento del ReAct esplicitata nei 3 step
+        # 1. Thought (pensiero), 2. Action (azione), 3. Observation (osservazione).
         expansion_note = (f" (espansa con {len(related)} topic correlati dal KG)"
                           if related else "")
         react_steps = "\n".join([
             f"Thought: Per il tema '{topic}' consulto prima la memoria del blog (KG + documenti locali) come base di conoscenza, poi validero' col web.",
-            f"Action: kg_topic_context + retrieve_local_documents (K-RAG deterministico){expansion_note}.",
-            f"Observation (KG): {kg_ctx[:200]}",
+            f"Action: kg_topic_context + retrieve_local_documents (K-RAG){expansion_note}.",
+            f"Observation (KG): {kg_ctx[:500]}",
             f"Observation (RAG): {rag_observation}.",
             f"Thought: {response.content or 'Procedo selezionando i tool situazionali per validare e arricchire.'}",
         ])
@@ -363,25 +380,23 @@ def research_agent_node(state: dict):
             "kg_summary": (state.get("kg_summary") or "") + "\n[KG context]\n" + kg_ctx,
             "local_sources": local_sources,
             "status": "researching",
-            "reasoning_trace": trace(state, "FASE 3 - K-RAG (KG+RAG deterministici):\n" + react_steps),
+            "reasoning_trace": trace(state, "Uso del K-RAG:\n" + react_steps),
         }
 
-    # Protezione: la generazione della tool call puo' fallire (es. il modello costruisce
-    # argomenti che violano lo schema di un tool -> errore di validazione dentro invoke).
-    # Non deve far cadere l'intera app: in caso di errore, procediamo verso la stesura con
-    # le fonti gia' raccolte (degradazione controllata invece di crash).
+    # Codice di protezione nel caso in cui il modello usa i tool in modo errato.
+    # L'app non deve crashare, ma deve procedere alla stesura con le fonti gia' raccolte (se presenti).
     try:
         response = llm_with_tools.invoke(msgs)
     except Exception as e:
-        print(f"[Research] Errore nella generazione della tool call ({e}). "
+        print(f"Errore nella generazione della tool call ({e}). "
               f"Procedo alla stesura con le fonti gia' raccolte.")
         return {
             "messages": [AIMessage(content="")],
             "status": "researched",
-            "reasoning_trace": trace(state, f"FASE 3 - ReAct: errore tool call ({type(e).__name__}), "
+            "reasoning_trace": trace(state, f"Errore tool call ({type(e).__name__}), "
                                             f"procedo alla stesura con le fonti disponibili."),
         }
-    # Trace ReAct per i passi successivi: se il modello chiama un tool lo registriamo come Action
+    # Se il modello chiama un tool lo registriamo come Action
     tool_calls = getattr(response, "tool_calls", None) or []
     if tool_calls:
         actions = "; ".join(f"{tc.get('name')}({tc.get('args', {})})" for tc in tool_calls)
@@ -394,18 +409,12 @@ def research_agent_node(state: dict):
         "reasoning_trace": trace(state, "FASE 3 - ReAct:\n" + react_line),
     }
 
-
+# Metodo di ricerca mirata che viene chiamato dopo la revisione da parte dell'utente (Hitl).
+# A differenza di research_agent_node, non ripercorre il K-RAG completo ne' riusa
+# tutta la cronologia accumulata: da' al modello un contesto pulito e una singola
+# istruzione mirata a chiamare il tool giusto per il dato richiesto. Questo evita
+# che un modello 3B si perda nel contesto enorme del giro precedente.
 def revision_research_node(state: dict):
-    """
-    Ricerca MIRATA per una richiesta di modifica che necessita di nuovi dati
-    (es. "aggiungi un confronto con l'Audi RS5"), instradata qui dall'HITL.
-
-    A differenza di research_agent_node, NON ripercorre il K-RAG completo ne' riusa
-    tutta la cronologia accumulata: da' al modello un contesto PULITO e una singola
-    istruzione mirata a chiamare il tool giusto per il dato richiesto. Questo evita
-    che un modello 3B si perda nel contesto enorme del giro precedente (problema
-    osservato: il compare_vehicles non veniva chiamato dopo una modifica).
-    """
     feedback = state.get("human_feedback", "") or ""
     topic = state.get("current_topic", "")
 
@@ -415,7 +424,7 @@ def revision_research_node(state: dict):
         background=default_background,
         editorial_guidelines=default_editorial_guidelines,
     )
-    # Istruzione mirata: una sola azione, un solo obiettivo. Niente cronologia vecchia.
+    # Facciamo scegliere un solo tool al modello, niente deviazioni strane.
     focused = (
         f"Stai integrando un post gia' scritto sul tema '{topic}'.\n"
         f"L'unica cosa che devi fare ORA e' raccogliere i dati per questa richiesta "
@@ -442,19 +451,16 @@ def revision_research_node(state: dict):
         # ragiona su un contesto ridotto e focalizzato.
         "messages": [SystemMessage(content=sys), HumanMessage(content=focused), response],
         "status": "researching",
-        "reasoning_trace": trace(state, "FASE 3bis - Ricerca mirata per modifica:\n" + react_line),
+        "reasoning_trace": trace(state, "Ricerca mirata per modifica:\n" + react_line),
     }
 
-
+# Metodo che viene chiamato quando il modello sta per scrivere senza aver raccolto fonti.
+# Serve come guardrail per evitare che il modello inventi contenuto. Inserisce una sola chiamata
+# al tool mcp_web_search basata sul tema corrente, cosi' il post avra' almeno una fonte.
+# Si attiva una sola volta per post (flag forced_web_search nello stato).
 def forced_search_node(state: dict):
-    """
-    GUARDRAIL: forza UNA ricerca web quando il modello sta per scrivere senza aver
-    raccolto alcuna fonte (eviterebbe di "inventare" il contenuto). Inietta una chiamata
-    al tool mcp_web_search basata sul tema corrente, cosi' il post avra' almeno una fonte.
-    Si attiva una sola volta per post (flag forced_web_search nello stato).
-    """
     topic = state.get("current_topic", "") or state.get("user_input", "")
-    print("[Guardrail] Nessuna fonte raccolta: forzo una ricerca web prima della stesura.")
+    print("\nNessuna fonte raccolta: forzo una ricerca web prima della stesura.")
     forced_call = AIMessage(
         content="",
         tool_calls=[{
@@ -468,12 +474,12 @@ def forced_search_node(state: dict):
         "messages": [forced_call],
         "forced_web_search": True,
         "status": "researching",
-        "reasoning_trace": trace(state, "FASE 3 - Guardrail: ricerca web forzata (nessuna fonte)."),
+        "reasoning_trace": trace(state, "\nRicerca web forzata (nessuna fonte)."),
     }
 
-
+# Metodo usato dalla logica self-RAG. Valuto che le fonti raccolte dai tool vengano giudicate
+# del modello, per capire se sono inerenti al contesto (es. una ricerca web che torna risultati completamente sbagliati,ecc)
 def rewrite_question_node(state: dict):
-    """Self-RAG: istruzione per riformulare la query dopo fonti non rilevanti."""
     instruction = (
         "I documenti non erano rilevanti. Riformula la ricerca con parole chiave diverse "
         "(puoi usare le entita' note dal KG) oppure usa un altro tool."
@@ -484,20 +490,20 @@ def rewrite_question_node(state: dict):
     }
 
 
-# ============================================================
-# FASE 4 - Drafting (KG coerenza + citazioni K-RAG)
-# ============================================================
+# FASE 4 - Drafting + HITL
+# Questo metodo si occupa della stesura dell'articolo, tira fuori le informazioni dal KG, citazioni
+# delle fonti (grounding valido) per evitare allucinazioni, ignorando le speculazioni del modello
+# e concentrandosi solo sui dati raccolti dai tool.
 def drafting_node(state: dict):
     """Stesura dell'articolo con coerenza KG e citazioni dalle fonti realmente recuperate."""
     msgs = state.get("messages", [])
     topic = state.get("current_topic", "")
-    # Chiave canonica dal TEMA PULITO (non dall'user_input grezzo col dialogo di chiarimento).
+    # Chiave canonica dal briefing e non dall'user_input grezzo col dialogo di chiarimento.
     topic_key = canonical_topic(topic) or canonical_topic(state.get("research_brief", ""))
     consistency = kg_topic_context(topic_key)
 
-    # Raccogliamo TUTTE le fonti di grounding effettivamente recuperate durante il ReAct:
-    # web search, schede tecniche (specs), confronti, trend. Sono le UNICHE fonti che il
-    # modello puo' citare: in DRAFT_PROMPT gli imponiamo di non inventarne altre.
+    # Raccogliamo tutte le fonti di grounding effettivamente recuperate durante il ReAct:
+    # e nessuna fonte inventata dal modello.
     GROUNDING_TOOL_NAMES = {
         "mcp_web_search", "fetch_vehicle_specs", "compare_vehicles",
         "compare_vehicles_tool", "fetch_automotive_trends", "retrieve_local_documents",
@@ -511,44 +517,40 @@ def drafting_node(state: dict):
                     and "nessun" not in content.lower()[:30]):
                 # La ricerca web ora restituisce un output strutturato per-fonte (titolo +
                 # URL + riassunto): le diamo piu' spazio per non tagliare gli URL da citare.
-                limit = 1500 if getattr(m, "name", "") == "mcp_web_search" else 600
+                limit = 2000 if getattr(m, "name", "") == "mcp_web_search" else 900
                 sources.append(f"[{m.name}] {content[:limit]}")
 
     # Aggiungiamo i documenti locali recuperati deterministicamente nel K-RAG
-    # (non sono ToolMessage perche' iniettati nel kickoff, ma vanno citati come fonti).
+    # (non sono ToolMessage perchè iniettati nel kickoff, ma vanno citati come fonti).
     local_sources = state.get("local_sources") or []
     all_sources = local_sources + sources
 
     sources_block = "\n\n".join(all_sources) if all_sources else "Nessuna fonte esterna recuperata."
 
     prompt = DRAFT_PROMPT.format(topic=topic, kg_consistency=consistency, sources=sources_block)
-    print("\n[FASE 4 - DRAFT] Sto scrivendo l'articolo (puo' richiedere qualche minuto)...")
+    print("\nSto scrivendo l'articolo.")
     response = drafting_llm.invoke(msgs + [HumanMessage(content=prompt)])
 
-    # PULIZIA DIFENSIVA: alcuni modelli locali antepongono il ragionamento ReAct
+    # Togliamo il ragionamento ReAct dalla bozza.
     clean = strip_reasoning_preamble(response.content)
 
-    print("[FASE 4 - DRAFT] Bozza completata.")
+    print("\nBozza completata.")
     return {
         "messages": [response],
         "draft_content": clean,
         "sources": [s[:150] for s in all_sources],
         "status": "awaiting_human_approval",
-        "reasoning_trace": trace(state, "FASE 4 - Stesura con coerenza KG e citazioni (K-RAG)."),
+        "reasoning_trace": trace(state, "Stesura con coerenza KG e citazioni (K-RAG)."),
     }
 
 
-# ============================================================
-# FASE 4 (HITL) - pattern interrupt()/Command del tutorial
-# ============================================================
+# Metodo che implementa lo Human-in-the-loop (HITL)
+# usa l'approccio interrupt(). Ci sono 4 opzioni di risposta:
+# - accept -> approva la bozza e si va all'update del KG;
+# - response -> feedback testuale: si torna in stesura applicando le modifiche.
+# - ignore -> scarta: si termina senza aggiornare il KG.
+# - edit -> modifica la bozza: si torna in stesura applicando le modifiche.
 def review_node(state: dict) -> Command[Literal["update_kg_node", "drafting_node", "research_agent", "__end__"]]:
-    """
-    Human-in-the-loop: presenta la bozza con interrupt() e gestisce la risposta.
-    Tipi di risposta (come nel tutorial: accept/edit/ignore/response):
-      - 'accept'   -> approva: si va all'update del KG.
-      - 'response' -> feedback testuale: si torna in stesura applicando le modifiche.
-      - 'ignore'   -> scarta: si termina senza aggiornare il KG.
-    """
     draft = state.get("draft_content", "(nessuna bozza)")
     revisions = state.get("revision_count") or 0
 
@@ -567,7 +569,7 @@ def review_node(state: dict) -> Command[Literal["update_kg_node", "drafting_node
     rtype = response.get("type") if isinstance(response, dict) else None
 
     if rtype == "accept":
-        print("\n[HITL] Bozza APPROVATA -> aggiornamento KG.")
+        print("\nBozza approvata, procedo con l'aggiornamento del KG.")
         instruction = (
             "L'utente ha APPROVATO l'articolo. Usa ESCLUSIVAMENTE il tool "
             f"'{KG_UPDATE_TOOL_NAME}' per salvare nel KG: topic, post_title, category, "
@@ -583,37 +585,33 @@ def review_node(state: dict) -> Command[Literal["update_kg_node", "drafting_node
         )
 
     if rtype == "ignore":
-        print("\n[HITL] Bozza SCARTATA -> fine senza aggiornare il KG.")
+        print("\nBozza scartata, termino senza aggiornare il KG.")
         return Command(goto=END, update={"human_feedback": "ignore", "status": "discarded"})
 
-    # 'response' (o qualsiasi feedback testuale) -> modifiche e ritorno in stesura
+    # Qualsiasi feedback testuale mi fa tornare nella fase di drafting o in quella di research se serve.
     feedback = (
         response.get("args", "")
         if isinstance(response.get("args"), str)
         else str(response.get("args", ""))
     )
-    # SMART ROUTING della modifica (HITL piu' completo):
-    # - se il feedback richiede NUOVI DATI (es. "aggiungi un confronto con l'Audi RS3"),
-    #   torniamo al research_agent, che puo' chiamare i tool (compare, specs, web) e poi
-    #   ri-passa dal drafting con le nuove informazioni;
-    # - se e' una modifica puramente TESTUALE (accorcia, cambia tono...), restiamo sul
-    #   drafting_node, piu' veloce, come prima.
+    # Se il feedback dell'utente chiede più dati allora vado nel research_node modificato
+    # altrimenti torno solo al drafting con istruzioni precise.
     if modification_needs_research(feedback):
-        print("\n[HITL] MODIFICHE con NUOVI DATI -> ricerca mirata (revision_research_node).")
+        print("\nNecessarie modifiche con nuovi dati, torno alla fase di ricerca.")
         return Command(
             goto="revision_research_node",
             update={
                 "human_feedback": feedback,
                 "revision_count": revisions + 1,
-                # Reset del contatore ricerche web: il nuovo giro di integrazione ha
-                # diritto al proprio budget di ricerche, indipendente dal giro precedente.
+                # Resetto il numero massimo di ricerche web
+                # Questo giro di ricerca e' completamente indipendente da quello precedente.
                 "web_search_count": 0,
                 "forced_web_search": False,
                 "status": "revising_with_research",
             },
         )
 
-    print("\n[HITL] MODIFICHE testuali -> ritorno in stesura (drafting).")
+    print("\nModifiche testuali richieste, torno alla fase di stesura.")
     instruction = (
         f"L'utente ha richiesto queste MODIFICHE testuali: '{feedback}'. "
         "Riscrivi la bozza applicandole e mantenendo le citazioni delle fonti."
@@ -627,6 +625,9 @@ def review_node(state: dict) -> Command[Literal["update_kg_node", "drafting_node
             "status": "revising",
         },
     )
+
+
+# SIAMO ARRIVATI QUI A COMMENTARE, MANCANO I TOOL DOPO SEO E UTILS.
 
 
 # ============================================================

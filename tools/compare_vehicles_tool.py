@@ -1,3 +1,10 @@
+"""
+Tool per la comparazione di veicoli (auto e moto)
+Usa Tavily per prendere informazioni su i veicoli scelti e le confronta.
+Usa due modelli: uno per la ricerca (ministral-3:3b) e uno per la comparazione (llama3.2:1b_fine_tuned).
+"""
+
+
 import os
 from pydantic import BaseModel, Field
 from langchain_core.tools import tool
@@ -6,22 +13,17 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from tavily import TavilyClient
 from prompts.tool_prompts import VEHICLE_RESEARCH_PROMPT, TINY_JUDGE_SYSTEM_PROMPT
 
-# Client Tavily
+
 tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
 
-# Nomi dei modelli (allineati a `ollama list`)
-# RICERCATORE: Ministral (lo stesso "cervello" del grafo). Il confronto empirico su testi
-# reali ha mostrato che Ministral riassume con pari/maggiore fedelta' ai dati ed e' piu' veloce
-# di Phi4-Mini; usarlo qui evita di caricare un terzo modello in VRAM (resta Ministral + giudice).
-RESEARCHER_MODEL = "ministral-3:3b"             # sintesi fattuale dei dati grezzi
-JUDGE_MODEL = "llama3.2:1b_fine_tuned"          # giudice fine-tuned per la comparazione (4 categorie + verdetto)
+
+RESEARCHER_MODEL = "ministral-3:3b"             # Per la sintesi e normalizzazione dei dati
+JUDGE_MODEL = "llama3.2:1b_fine_tuned"          # Giudice per la comparazione dei modelli
 
 
-# ==========================================
-# SCHEMI DI INPUT (APPIATTITI PER MINISTRAL)
-# Schema "piatto" (campi semplici invece di oggetti annidati): i modelli locali
-# popolano gli argomenti del tool in modo molto piu' affidabile cosi'.
-# ==========================================
+# Uso uno schema piatto invece che un JSON per evitare
+# che il modello piccolo sbagli nel riempimento dei campi.
+
 from typing import Optional
 
 
@@ -37,9 +39,8 @@ class CompareVehiclesInput(BaseModel):
     v2_anno: Optional[str] = Field(default="", description="Anno del secondo veicolo (es. 2024). Opzionale.")
     v2_motore: Optional[str] = Field(default="", description="Motorizzazione del secondo veicolo (es. 1.0 TCe). Opzionale.")
 
-
+# Tiene insieme i dati del veicolo in modo pulito e ordinato
 class VehicleSpec:
-    """Raggruppa i dati di un veicolo internamente al tool."""
     def __init__(self, tipo, marca, modello, anno, motorizzazione):
         self.tipo = tipo
         self.marca = marca
@@ -48,9 +49,9 @@ class VehicleSpec:
         self.motorizzazione = motorizzazione
 
 
-# ==========================================
-# RICERCA + SINTESI FATTUALE
-# ==========================================
+# Prima parte di ricerca dei dati
+# arrichisco la query con i dati del veicolo più keywords specifiche
+# la riceca va fatta solo su siti precisi.
 def deep_research_vehicle(vehicle: VehicleSpec) -> str:
     """Ricerca mirata su fonti autorevoli e sintesi tecnica fattuale con il modello ricercatore."""
     query = (f"{vehicle.tipo} {vehicle.marca} {vehicle.modello} {vehicle.anno} "
@@ -62,7 +63,7 @@ def deep_research_vehicle(vehicle: VehicleSpec) -> str:
     ]
 
     testo_grezzo = ""
-    # Tentativo 1: ricerca avanzata ristretta a domini autorevoli
+    # Ricerco nella whitelist di siti
     try:
         risposta = tavily_client.search(
             query=query, search_depth="advanced", max_results=2, include_domains=siti_autorevoli
@@ -72,7 +73,7 @@ def deep_research_vehicle(vehicle: VehicleSpec) -> str:
     except Exception as e:
         print(f"[Avviso] Errore Tavily (ricerca avanzata) per {vehicle.marca}: {e}")
 
-    # Tentativo 2 (fallback): ricerca base senza restrizione di dominio
+    # Se non trovo niente provo con una ricerca normale
     if not testo_grezzo.strip():
         try:
             risposta = tavily_client.search(query=query, search_depth="basic", max_results=2)
@@ -86,19 +87,17 @@ def deep_research_vehicle(vehicle: VehicleSpec) -> str:
     summary = researcher.invoke([HumanMessage(content=prompt)])
     profile = (summary.content or "").strip()
 
-    # RETE DI SICUREZZA: il giudice Llama 3.2 fine-tuned e' addestrato su profili brevi
-    # (~150-200 token, finestra max 2048). Se Ministral, nonostante il prompt, produce un
-    # profilo troppo lungo, lo tronchiamo per non mandare il giudice fuori distribuzione
-    # (cosa che lo faceva collassare generando solo il titolo). ~900 caratteri ~= 200 token.
+    # Il modellino fine tuned è stato addestrato con profili lunghi 150-200 token (max 2048).
+    # Per sicurezza tronco il profilo a 900 caratteri. Sennò genererà un'output instabile.
     MAX_PROFILE_CHARS = 900
     if len(profile) > MAX_PROFILE_CHARS:
         profile = profile[:MAX_PROFILE_CHARS].rsplit(" ", 1)[0] + "..."
     return profile
 
 
-# ==========================================
-# TOOL DI COMPARAZIONE
-# ==========================================
+# Tool effettivo di comparazione.
+# Chiamo parallelamente due ricerche con Ministral.
+
 @tool("compare_vehicles", args_schema=CompareVehiclesInput)
 def compare_vehicles_tool(tipo: str, v1_marca: str, v1_modello: str,
                           v2_marca: str, v2_modello: str,
@@ -111,8 +110,8 @@ def compare_vehicles_tool(tipo: str, v1_marca: str, v1_modello: str,
     veicolo_1 = VehicleSpec(tipo, v1_marca, v1_modello, v1_anno, v1_motore)
     veicolo_2 = VehicleSpec(tipo, v2_marca, v2_modello, v2_anno, v2_motore)
 
-    print(f"\n[Tool Comparatore] Ricerca profonda: {veicolo_1.marca} {veicolo_1.modello} "
-          f"vs {veicolo_2.marca} {veicolo_2.modello}...")
+    print(f"\nComparazione di {veicolo_1.marca} {veicolo_1.modello} "
+          f"vs {veicolo_2.marca} {veicolo_2.modello}")
 
     dati_v1 = deep_research_vehicle(veicolo_1)
     dati_v2 = deep_research_vehicle(veicolo_2)
@@ -127,6 +126,6 @@ def compare_vehicles_tool(tipo: str, v1_marca: str, v1_modello: str,
         "Genera la comparazione seguendo le istruzioni del sistema."
     ))
 
-    print("[Tool Comparatore] Elaborazione del verdetto (modello giudice)...")
+    print("Elaborazione del verdetto in corso")
     verdetto = judge.invoke([system_prompt, user_prompt])
     return verdetto.content

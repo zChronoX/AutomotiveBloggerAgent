@@ -1,14 +1,17 @@
 """
-Aggiornamento incrementale del Knowledge Graph.
-Il KG viene aggiornato SOLO dopo approvazione dell'utente (requisito HITL).
-
-Codice estratto da kg_tool.py (funzione update_knowledge_graph).
+Tool che aggiorna/scrive nel Knoledge Graph, viene chiamata solo dopo l'approvazione dell'utente, mai dall'agente in autonomia.
+Quindi sfrutta l'HITL.
 """
 
 from typing import List, Optional
 from .client import get_db_driver, open_session
 
 
+
+
+# Funzione che applica internamente il metodo best_semantic_match, 
+# in modo da usare il topic esistente se il confronto
+# via embeddings è superiore della soglia impostata.
 def update_kg_data(
     topic: str,
     post_title: str,
@@ -20,21 +23,39 @@ def update_kg_data(
     seo_score: Optional[float] = None,
     cover_image: str = "",
 ) -> str:
-    """Aggiorna (incrementalmente) il Knowledge Graph con un articolo approvato.
-
-    Il topic in ingresso e' gia' una chiave canonica (vedi canonical_topic). Prima di
-    salvare, lo risolviamo SEMANTICAMENTE verso un topic esistente: se nel KG c'e' gia'
-    un soggetto equivalente (es. "giulia quadrifoglio" vs "alfa romeo giulia quadrifoglio"),
-    agganciamo QUELLO invece di creare un nodo quasi-duplicato. Cosi' il grafo non si
-    frammenta e la gap-analysis resta affidabile.
-    """
-    # Risoluzione semantica del topic verso uno gia' esistente (se abbastanza simile).
+    # Risoluzione semantica del topic.
     try:
         from .queries import resolve_topic
         topic = resolve_topic(topic)
     except Exception:
         # Se la risoluzione fallisce, usiamo il topic canonico cosi' com'e'.
         topic = (topic or "").lower().strip()
+
+
+    # Costruisco la query Cypher. Il merge cerca un nodo
+    # con etichetta topic e proprità name, uguale a $topic,
+    # se lo trova lo riusa, altrimenti lo crea, così evito duplicati.
+    # normalizzo a minuscolo il titolo direttamente con Neo4J.
+
+    # ON CREATE SET viene eseguito solo se il nodo è stato appena creato
+    # altrimenti viene eseguito ON MATCH SET.
+
+    #Il MERGE alla fine collega il post e il topic, evitando duplicati come sopra.
+
+    # FOREACH itera sugli elementi della lista $related_topics,
+    # così crea/trova un topic con quel nome, e crea una relazione
+    # dal topic principale a quello correlato.
+    # Ottengo una query expansion, quando l'agente cercherà "aerodinamica attiva"
+    # troverà anche "prestazioni" e "hypercar".
+
+    # Per ogni fonte, si crea un nodo Source, collegato al post con BASED_ON, 
+    # se due post hanno come riferimento quella fonte, puntano allo stesso nodo.
+
+    # Le claims, sono le affermazioni chiave dei post, prese da "update_kg_node"
+    # Ogni claim è un nodo che il "drafting_node" usa per coerenza
+    # se sta scrivendo post su uno stesso tema, lo consulta e capisce che non
+    # deve scrivere cose incoerenti.
+
 
     query = """
     // 1. Crea/Trova Topic e Post (con timestamp alla creazione)
@@ -46,6 +67,8 @@ def update_kg_data(
                   p.seo_score = $seo_score, p.cover_image = $cover_image
     MERGE (p)-[:COVERS_TOPIC]->(t)
 
+
+    
     // 2. Topic correlati (relationships between topics)
     FOREACH (rel_topic IN $related_topics |
         MERGE (rt:Topic {name: toLower(rel_topic)})
@@ -64,6 +87,10 @@ def update_kg_data(
         MERGE (p)-[:ASSERTS]->(c)
     )
     """
+
+
+    # Creo una connessione a Neo4J, apro una sessione, eseguo la query Cypher passando 
+    # tutti i parametri che servono, ritorna una stringa di conferma, o un errore.
     try:
         driver = get_db_driver()
         with open_session(driver) as session:

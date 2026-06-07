@@ -1,3 +1,12 @@
+"""
+Tool di generazione delle immagini di copertina per i post approvati.
+Uso due API diverse, la prima gratis di PollinationsAI funziona sempre
+ma produce risultati scarsi. La seconda usa un modello FLUX, che produce 
+risultati di altissima qualità, ma usa l'API di Cloudflare.
+Nessuna generaazione delle immagini viene fatta in locale.
+"""
+
+
 import os
 import time
 import base64
@@ -6,14 +15,16 @@ import requests
 from langchain_core.tools import tool
 from prompts.tool_prompts import IMAGE_GENERATOR_PROMPT
 
-# Cartella dedicata alle copertine generate (creata se non esiste):
-# evita di affollare la cartella principale del progetto.
+
+
+# cartella delle copertine generate
 COVERS_DIR = "generated_covers"
 
-# --- Credenziali Cloudflare (lette dal .env, MAI hardcoded) ---
-# Nel .env servono: CLOUDFLARE_ACCOUNT_ID e CLOUDFLARE_API_TOKEN
+# Credenziali Cloudflare lette dal .env
 CF_ACCOUNT_ID = os.environ.get("CLOUDFLARE_ACCOUNT_ID")
 CF_API_TOKEN = os.environ.get("CLOUDFLARE_API_TOKEN")
+
+# Modello usato (si può cambiare se si vuole)
 CF_MODEL = "@cf/black-forest-labs/flux-1-schnell"
 
 
@@ -23,12 +34,9 @@ def _save_bytes(filepath: str, data: bytes) -> str:
     return f"Immagine generata e salvata con successo come '{filepath}'."
 
 
+
+# API di generazione delle immagini preferito perché ha qualità altissima
 def _genera_flux(prompt: str, filepath: str) -> str:
-    """
-    Motore PRINCIPALE: Cloudflare Workers AI con FLUX.1-schnell.
-    Servizio cloud (non usa la GPU locale). Restituisce una stringa di esito;
-    solleva un'eccezione se fallisce, cosi' il chiamante puo' attivare il fallback.
-    """
     if not CF_ACCOUNT_ID or not CF_API_TOKEN:
         raise RuntimeError("Credenziali Cloudflare assenti nel .env "
                            "(CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN).")
@@ -52,12 +60,9 @@ def _genera_flux(prompt: str, filepath: str) -> str:
     # binaria diretta
     return _save_bytes(filepath, response.content)
 
-
+# API di generazione delle immagini di fallback in caso di fallimento di Cloudflare
+# produce risultati di qualità molto bassa (era inizialmente la prima scelta prima di conoscere Flux 1)
 def _genera_pollinations(prompt: str, filepath: str) -> str:
-    """
-    Motore di FALLBACK: Pollinations AI (Flux gratuito).
-    Usato solo se Cloudflare non e' disponibile/fallisce.
-    """
     encoded_prompt = urllib.parse.quote(prompt)
     url = (f"https://image.pollinations.ai/prompt/{encoded_prompt}"
            f"?width=1920&height=1080&nologo=true&model=flux")
@@ -67,6 +72,13 @@ def _genera_pollinations(prompt: str, filepath: str) -> str:
     return _save_bytes(filepath, response.content)
 
 
+
+
+# Tool vero e proprio che genera le immagini
+# Genera un'immagine con il timestamp corrente (così evito sovrascritture)
+# Utilizzo anche una tecnica di prompt engineering, in cui
+# dico al modello di evitare a tutti i costi parole, scritte e loghi
+# perché tendono sempre ad apparire.
 @tool(description=IMAGE_GENERATOR_PROMPT)
 def generate_cover_image(prompt: str, filename: str = None) -> str:
     """
@@ -79,15 +91,11 @@ def generate_cover_image(prompt: str, filename: str = None) -> str:
     except Exception:
         pass
 
-    # Nome file UNICO di default: evita di sovrascrivere copertine precedenti.
+
     if not filename:
         filename = f"copertina_post_{int(time.time())}.png"
     filepath = os.path.join(COVERS_DIR, os.path.basename(filename))
 
-    # Arricchiamo il prompt con direttive di STILE e direttive NEGATIVE: i modelli di
-    # generazione (FLUX in particolare) tendono ad aggiungere finte scritte/loghi/layout da
-    # rivista quando il prompt evoca "copertina". Forziamo fotorealismo sul soggetto e
-    # vietiamo qualsiasi testo. Questo suffisso vale sia per FLUX che per Pollinations.
     style_suffix = (
         ", photorealistic, highly detailed, professional automotive photography, "
         "sharp focus, cinematic lighting, clean composition. "
@@ -96,14 +104,14 @@ def generate_cover_image(prompt: str, filename: str = None) -> str:
     )
     enriched_prompt = f"{prompt.strip()}{style_suffix}"
 
-    # 1) Tentativo con Cloudflare FLUX (principale)
+    # Provo con Flux 1
     try:
         return _genera_flux(enriched_prompt, filepath)
     except Exception as e_flux:
         msg_flux = f"[Copertina] Cloudflare FLUX non disponibile ({e_flux}); provo il fallback Pollinations..."
         print(msg_flux)
 
-    # 2) Fallback: Pollinations
+    # Altrimenti vado di Pollinations
     try:
         return _genera_pollinations(enriched_prompt, filepath)
     except requests.exceptions.Timeout:

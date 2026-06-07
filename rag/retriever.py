@@ -1,47 +1,39 @@
 """
-Logica di retrieval dal vector store locale (ChromaDB).
-Funzione core (Python puro), richiamabile dal tool wrapper o direttamente.
-
-Tracciata con @traceable di LangSmith: la chiamata appare nella waterfall come
-step "retriever" dedicato, con la query in input e i documenti recuperati in output
-(o il messaggio di "nessun documento" se non trova nulla).
-
-Codice estratto da rag_tool.py.
+Modulo che cerca nei documenti locali (quindi in ChromaDB) e
+torna i chunk più rilevanti con due soglie diverse
+I metodi sono tracciabili con LangSmith (compaiono nella waterfall)
 """
 
 import os
 from config.settings import Configuration
 from .vectorstore import vectorstore, PERSIST_DIR
 
-# @traceable rende la funzione visibile nella waterfall di LangSmith. Import difensivo:
-# se langsmith non e' installato o il tracing e' spento, usiamo un decoratore no-op.
+# @traceable rende la funzione visibile nella waterfall di LangSmith.
 try:
     from langsmith import traceable
 except Exception:
     def traceable(*d_args, **d_kwargs):
         def _wrap(fn):
             return fn
-        # Supporta sia @traceable sia @traceable(...)
         if len(d_args) == 1 and callable(d_args[0]) and not d_kwargs:
             return d_args[0]
         return _wrap
 
 _cfg = Configuration()
 
-# Recuperiamo piu' candidati (k) e poi filtriamo per distanza, cosi' all'agente
-# arrivano solo i chunk davvero pertinenti, ordinati dal migliore.
-# Valori ora configurabili da .env (RAG_TOP_K, RAG_DISTANCE_THRESHOLD) senza toccare il codice.
+# Quanti chunk da recuperare in totale.
 TOP_K = _cfg.rag_top_k
 
-# Soglia di distanza: piu' BASSA = piu' selettiva. Tarata su dati reali (1.10): tiene i
-# pertinenti (fino a ~1.065) e scarta i non pertinenti (da ~1.216). Il filtro fine resta al Self-RAG.
+# Sogliia iniziale, tutto ciò che sta sotto è pertinente, sopra invece no.
 DISTANCE_THRESHOLD = _cfg.rag_distance_threshold
 
-# Soglia del FALLBACK: quando il filtro principale scarta tutto, teniamo il documento migliore
-# SOLO se sotto questa soglia piu' permissiva. Oltre, niente fonte (meglio nessuna che sbagliata).
+# Seconda soglia usata, nel caso in cui la prima dovesse scartare proprio tutto.
+# Oltre questa soglia non consideriamo i chunk. Meglio non prendere nulla che prendere qualcosa di sbagliato.
 FALLBACK_MAX = _cfg.rag_fallback_max
 
 
+
+# Metodo che estrae il nome del file dal chunk. 
 def _doc_source(doc) -> str:
     """Estrae il nome del file di origine dai metadati del chunk (se presente)."""
     meta = getattr(doc, "metadata", {}) or {}
@@ -51,13 +43,12 @@ def _doc_source(doc) -> str:
     return "documento locale"
 
 
+# Funzione che recupera i documenti dal database locale (ChromaDB).
+# Attraverso una query, vediamo se ci sono documenti rilevanti (con similarità)
+# Ordiniamo in base alla distanza crescente
+# Torniamo i chunk pertinenti. Includiamo anche il nome del file per correttezza.
 @traceable(run_type="retriever", name="rag_local_retrieval")
 def retrieve_local(query: str) -> str:
-    """Recupera dai documenti locali (ChromaDB) i frammenti piu' rilevanti per la query.
-
-    L'output include il NOME DEL FILE di origine di ogni chunk, cosi' nella waterfall
-    di LangSmith si vede esattamente da quali documenti locali ha attinto l'agente.
-    """
     if not os.path.isdir(PERSIST_DIR):
         return ("Il database locale non esiste ancora. Esegui prima 'python -m rag.ingest' "
                 "per indicizzare i documenti.")
@@ -70,17 +61,16 @@ def retrieve_local(query: str) -> str:
         # Ordiniamo per distanza crescente (i piu' pertinenti per primi)
         scored.sort(key=lambda x: x[1])
 
-        # DIAGNOSTICA: visibile solo con DEBUG=true nel .env
+        # Diagnostica di debug non visibile di default (guardare l'env.)
         if _cfg.debug:
             print("[DIAG RAG] distanze:", [round(s, 3) for _, s in scored])
 
         # Filtro per distanza (soglia di pertinenza)
         filtered = [(doc, s) for doc, s in scored if s <= DISTANCE_THRESHOLD]
 
-        # Fallback CONDIZIONATO: se il filtro azzera tutto, teniamo il documento migliore
-        # SOLO se e' almeno entro FALLBACK_MAX. Se anche il migliore e' troppo lontano,
-        # NON forziamo una fonte: e' meglio "nessun documento pertinente" che un documento
-        # fuori tema (era la causa di fonti spurie, es. reti di bordo in un post su una moto).
+        # Se la prima soglia non fa prendere nessun chunk
+        # usiamo una soglia più flessibile, ma sotto un valore massimo, 
+        # prendiamo il chunk più rilevante. Altrimenti non prendiamo nulla.
         if not filtered:
             best_doc, best_dist = scored[0]
             if best_dist <= FALLBACK_MAX:

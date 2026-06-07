@@ -1,4 +1,10 @@
-# tool_prompts.py
+
+# Modulo che contiene le descrizioni di ogni tool disponibile per l'agente, 
+# inlcusi i prompt e le regole che definiscono come usare questi strumenti. 
+
+
+# Prompt per la ricerca web attraverso Tavily e MCP. Deve essere
+# usato per trovare fonti ed informazioni reali/attuali.
 
 WEB_SEARCH_PROMPT = """
 Scopo: Invia una richiesta al Server MCP (Microservizio) per effettuare una ricerca web profonda tramite Tavily.
@@ -6,15 +12,18 @@ Quando usarlo: USA QUESTO TOOL quando il tema riguarda ATTUALITA', novita', noti
 Azione: Restituisce un riassunto tecnico e le fonti originali. REGOLA ASSOLUTA: Se integri questi dati nel post, devi obbligatoriamente citare la fonte esterna nel contenuto generato, per dimostrare che il testo è supportato da documenti reali.
 """
 
+# Prompt per il RAG, viene usato per recuperare
+# appunti/informazioni tecniche dai documenti locali.
+
 RAG_RETRIEVAL_PROMPT = """
 Scopo: Interroga il database vettoriale locale (ChromaDB) contenente gli appunti privati del blogger, manuali tecnici e vecchi articoli.
 Quando usarlo: Usa questo strumento quando devi scrivere un articolo e hai bisogno di recuperare informazioni tecniche specifiche salvate in locale o dettagli da appunti personali.
 Azione: Fornisce i frammenti di testo (chunk) dalla memoria locale. REGOLE ASSOLUTE: Non inventare dati. Se usi informazioni provenienti da questo tool nella tua bozza, DEVI esplicitamente inserire la citazione o il riferimento alla fonte nel testo finale.
 """
 
-# ==========================================
-# TOOL DEL KNOWLEDGE GRAPH (3 letture + 1 scrittura)
-# ==========================================
+# Prompt per la cronologia di un topic specifico all'interno del Knowledge Graph.
+# Serve a far capire al modello se ha già parlato di un determinato argomento, 
+# in modo da non creare ripetizioni di contenuti.
 
 KG_QUERY_PROMPT = """
 Scopo: Legge il Knowledge Graph (Neo4j) del blog per la cronologia di UN argomento specifico.
@@ -29,6 +38,11 @@ Nota per la scelta del tool KG corretto:
 - Per il contesto COMPLETO (post, claim, fonti, correlati) utile in stesura -> usa 'get_editorial_context'.
 """
 
+
+# Prompt per la panoramica di tutti i topic
+# Serve a far capire al modello i gap di copertura
+# e proporre post diversi.
+
 KG_TOPICS_OVERVIEW_PROMPT = """
 Scopo: Restituisce la panoramica COMPLETA della copertura editoriale dal Knowledge Graph:
 tutti i topic con numero di post e data dell'ultimo post, ordinati dal più trascurato.
@@ -37,6 +51,11 @@ e gli argomenti non trattati di recente, così da proporre post nuovi e diversif
 Azione: Non richiede parametri. I topic 'MAI trattato' sono i gap prioritari.
 """
 
+
+# Prompt per il contesto editoriale completo di un topic
+# Alimenta il K-RAG con i claim da non contraddire, fonti usate
+# e possibili citazioni cross post.
+
 KG_CONTEXT_PROMPT = """
 Scopo: Recupera il contesto editoriale di un topic dal Knowledge Graph: post esistenti,
 claim già affermati, fonti già usate e topic correlati.
@@ -44,6 +63,11 @@ Quando usarlo: Nella fase di STESURA, per garantire coerenza con i contenuti pas
 evitare di contraddire claim già pubblicati e creare collegamenti interni (cross-link).
 Input richiesto: topic (str) - l'argomento dell'articolo che stai scrivendo.
 """
+
+# Prompt di scrittura nel KG (il più importante dei 4). 
+# Serve a dire esattamente all'agente che tipi di parametri
+# deve estrarre dal post per la pubblicazione su Neo4J e soprattutto
+# non deve mai essere chiamato prima dell'approvazione finale dell'utente.
 
 KG_UPDATE_PROMPT = """
 Scopo: Scrive un nuovo nodo e una relazione nel Knowledge Graph (Neo4j).
@@ -59,11 +83,21 @@ Devi estrarre dal contesto e fornire i seguenti parametri obbligatori:
 - related_topics (list[str]): Una lista di argomenti correlati al topic principale, utili per espandere il grafo.
 """
 
+
+# Prompt per il tool di generazione immagini di copertina
+# viene invocato all'approvazione del post (non ha senso prima)
+
+
 IMAGE_GENERATOR_PROMPT = """
 Scopo: Genera fisicamente un'immagine fotorealistica di copertina per l'articolo e la salva sul computer (Cloudflare FLUX, con fallback Pollinations AI).
 Input richiesto: Fornisci un prompt testuale MOLTO DESCRITTIVO in LINGUA INGLESE che descriva il SOGGETTO e la SCENA in dettaglio (veicolo, ambiente, luce, atmosfera), es. "A hyper-realistic cinematic shot of a red Ferrari Roma driving on a wet mountain road during twilight". NON chiedere testo, scritte, titoli o loghi nell'immagine: le direttive di stile e i divieti di testo vengono aggiunti automaticamente.
 Quando usarlo: Quando l'articolo è pronto o quando l'utente chiede esplicitamente una copertina per il post.
 """
+
+# Prompt per l'analisi SEO (Search Engine Optimization) 
+# viene invocato all'approvazione del post, valuta
+# la qualità di lettura del post, difficoltà grammaticale, 
+# leggibilità del testo in italiano, per un blog tecnico automotive, 40-60 e' il range adeguato).
 
 SEO_ANALYSIS_PROMPT = """
 Scopo: Calcola due metriche SEO sulla bozza dell'articolo, in modo deterministico (formula matematica, nessuna opinione):
@@ -72,6 +106,14 @@ Scopo: Calcola due metriche SEO sulla bozza dell'articolo, in modo deterministic
 Input: il testo completo della bozza + la keyword (parola chiave) su cui posizionare l'articolo.
 Quando usarlo: SOLO dopo che la bozza e' stata scritta; misura oggettivamente la qualita' SEO del post appena generato.
 """
+
+
+# Prompt per tool che recupera i titoli e le anteprime delle ULTIME NOTIZIE automotive 
+# dai feed RSS di testate specializzate (Motor1, Autoblog ecc.). Viene invocato
+# solo quando l'utente chiede idee o argomenti per nuovi post e quando sta
+# scrivendo un articolo su TENDENZE O NOVITA' di mercato e vuole notizie fresche
+# dalle testate. Non usarlo se il tema e' tecnico/enciclopedico (freni, batterie, ADAS):
+# per quelli usa retrieve_local_documents o fetch_vehicle_specs.
 
 TREND_ANALYSIS_PROMPT = """
 Scopo: Recupera i titoli e le anteprime delle ULTIME NOTIZIE automotive dai feed RSS di testate specializzate (Motor1, Autoblog ecc.).
@@ -83,6 +125,12 @@ NON usarlo se il tema e' tecnico/enciclopedico (freni, batterie, ADAS): per quel
 Azione: Restituisce una lista di titoli recenti dal feed RSS. Usali per proporre idee basate sulle notizie del momento.
 """
 
+
+# Prompt per tool che recupera i dati tecnici specifici di un veicolo.
+# Non serve per confrontare tra loro i veicoli, serve solo a recuperare i dati di
+# un veicolo, per es. kW, CV, peso, cilindrata ecc. Usalo quando devi
+# stendere un articolo o quando devi integrare i dati tecnici.
+
 VEHICLE_SPECS_PROMPT = """
 Scopo: Interroga Wikipedia Italia per estrarre la scheda tecnica completa, la storia e il background enciclopedico di UN SINGOLO veicolo.
 Input: car_model (stringa) — il nome completo del veicolo (es. 'Alfa Romeo Giulia', 'Ducati Panigale V4').
@@ -91,6 +139,8 @@ ATTENZIONE: per CONFRONTARE due veicoli NON usare questo tool due volte — usa 
 Azione: Restituisce un riassunto strutturato con le specifiche estratte da Wikipedia.
 """
 
+
+# Prompt per la sintesi delle fonti estratte dalla ricerca web
 MCP_SUMMARIZER_PROMPT = """
 Sei un analista esperto di automobili e motori. Leggi i seguenti estratti di articoli 
 web grezzi e scrivi un riassunto tecnico e dettagliato. 
@@ -103,16 +153,14 @@ Testi grezzi dal web:
 Scrivi solo il riassunto tecnico:
 """
 
-# ==========================================
-# PROMPT PER IL TOOL DI COMPARAZIONE VEICOLI
-# ==========================================
+# Prompt per il tool di ricerca veicoli + confronto delle specifiche
+# questa coppia di prompt vengono usate per la comparazione dei veicoli.
+# i dati grezzi vengono estratti con Ministral. Il modello deve seguire
+# regole specifiche di formattazione dei dati, necessarie affinché il modello
+# fine tuned funzioni come è stato allenato. Infatti llama 3.2 1B è stato allenato
+# con un dataset di elementi formati da 150/200 token con una finestra massima di 2048.
+# Di conseguenza se passassi roba troppo discorsiva, il giudice fallirebbe.
 
-# 1. Prompt per il Ricercatore (Ministral): sintesi fattuale COMPATTA
-# IMPORTANTE: l'output di questo prompt diventa l'input del giudice Llama 3.2 fine-tuned,
-# che e' stato addestrato su profili BREVI (~150-200 token per veicolo, finestra max 2048).
-# Se il profilo e' troppo lungo/verboso, il giudice va fuori distribuzione e fallisce
-# (genera solo il titolo). Quindi qui imponiamo un profilo SECCO: un solo paragrafo,
-# niente Markdown, niente sezioni/elenchi, solo i dati chiave in forma discorsiva breve.
 VEHICLE_RESEARCH_PROMPT = """Sei un analista dati del settore automotive.
 Dai dati grezzi qui sotto, scrivi un profilo tecnico BREVE e FATTUALE del veicolo richiesto.
 
@@ -137,7 +185,11 @@ TESTO GREZZO RECUPERATO:
 
 Scrivi il profilo tecnico breve (un paragrafo, max 60-80 parole):"""
 
-# 2. Prompt per LLaMA 3.2 1B (Il Giudice Fine-Tuned)
+# Prompt del modellino da 1B con fine tuning. Ritorna una struttura precisa (senza tabelle e cose strane).
+# La comparazione è articolata in 4 punti + un verdetto finale.
+# In ogni punti vi è una breve spiegazione del perché quel modelllo di veicolo vince (o perde/pareggia)
+# con un giudizio finale
+
 TINY_JUDGE_SYSTEM_PROMPT = """Sei un ingegnere specializzato in comparazioni automobilistiche e motociclistiche.
 Il tuo compito è analizzare i profili tecnici di due veicoli e decretare un vincitore per categorie specifiche, basandoti ESCLUSIVAMENTE sui dati forniti nei tag XML.
 
@@ -162,12 +214,16 @@ Rispondi usando esattamente questo formato in Markdown:
 *Vincitore:* [Nome Veicolo o Pareggio]
 *Motivazione:* [Spiegazione tecnica in 1-2 frasi basata sulle dotazioni]
 
-**🏆 Verdetto Finale**
+**Verdetto Finale**
 [Un paragrafo conclusivo di 3 righe che riassume a chi è destinato il primo veicolo e a chi il secondo].
 
 VINCOLI:
 - Non aggiungere altre categorie.
 - Non inventare specifiche tecniche non menzionate nei dati in ingresso."""
+
+
+# Prompt usato per il ragionamento esplicito del ciclo ReAct
+# sfrutta la reflection.
 
 THINK_TOOL_PROMPT = """Strumento di RIFLESSIONE strategica (Thought esplicito del ciclo ReAct).
 Usalo per fermarti ad analizzare i risultati ottenuti e pianificare il prossimo passo,
