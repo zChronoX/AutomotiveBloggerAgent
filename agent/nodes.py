@@ -627,14 +627,16 @@ def review_node(state: dict) -> Command[Literal["update_kg_node", "drafting_node
     )
 
 
-# SIAMO ARRIVATI QUI A COMMENTARE, MANCANO I TOOL DOPO SEO E UTILS.
 
 
-# ============================================================
-# FASE 5 - Pubblicazione (solo dopo approvazione)
-# ============================================================
+
+# Fase 5 - Aggiornamento del KG, genera copertina, calcola SEO e salva nel Knowledge Graph.
+
+# Nodo di pubblicazione per il  KG. Viene eseguito all'approvazione del post.
+# recupero lo stato del grafo, come topic, categoria, draft e fonti.
+# Genero l'immagine di copertina, analisi SEO e estraggo claim correlati e argomenti correlati
+# per il KG.
 def update_kg_node(state: dict) -> Command[Literal["__end__"]]:
-    """Pubblica l'articolo approvato: genera copertina, calcola SEO e salva nel Knowledge Graph."""
     topic = state.get("current_topic") or "argomento automotive"
     plan = state.get("planning_info") or []
     category = "news"
@@ -645,23 +647,23 @@ def update_kg_node(state: dict) -> Command[Literal["__end__"]]:
     sources = state.get("sources") or []
     post_title = topic
 
-    # --- 1. COPERTINA ---
+    # Tool generazione immagini
     cover_path = ""
     try:
-        print("[PUBLISH] Genero l'immagine di copertina (puo' richiedere qualche secondo)...")
+        print("Genero l'immagine di copertina.")
         cover_prompt = (
             f"A stunning high-resolution photograph of the subject: '{topic}'. "
             "Professional automotive photography, photorealistic, dramatic cinematic "
             "lighting, sharp focus, ultra detailed, shot by a professional car photographer."
         )
         cover_result = generate_cover_image.invoke({"prompt": cover_prompt})
-        print(f"[PUBLISH] {cover_result}")
+        print(f"\n{cover_result}")
         if "salvata" in cover_result.lower() and "'" in cover_result:
             cover_path = cover_result.split("'")[1]
     except Exception as e:
-        print(f"[PUBLISH] Copertina non generata: {e}")
+        print(f"\nCopertina non generata: {e}")
 
-    # --- 2. SEO ---
+    # Tool SEO
     seo_score = None
     try:
         _stop = {
@@ -671,15 +673,14 @@ def update_kg_node(state: dict) -> Command[Literal["__end__"]]:
         _words = [w.strip(":,.;").lower() for w in topic.split()]
         _keyword = next((w for w in _words if w and w not in _stop and len(w) > 2), topic)
         seo_report = analyze_seo_and_readability.invoke({"text": draft, "target_keyword": _keyword})
-        print(f"[PUBLISH] {seo_report}")
+        print(f"\n{seo_report}")
         import textstat
         textstat.set_lang("it")
         seo_score = round(float(textstat.gulpease_index(draft)), 1)
     except Exception as e:
-        print(f"[PUBLISH] Analisi SEO non riuscita: {e}")
+        print(f"\nAnalisi SEO non riuscita: {e}")
 
-    # --- 3. ESTRAZIONE CONOSCENZA (key claims + related topics) dal post approvato ---
-    # Riempie i campi 'claims' e 'relationships' del KG richiesti dalle specifiche.
+    # Estrazione claims e related topics.
     claims, related = [], []
     try:
         extractor = llm.with_structured_output(KGExtraction)
@@ -689,18 +690,16 @@ def update_kg_node(state: dict) -> Command[Literal["__end__"]]:
         ])
         claims = [c.strip() for c in (extraction.key_claims or []) if c and c.strip()]
         related = [r.strip().lower() for r in (extraction.related_topics or []) if r and r.strip()]
-        print(f"[KG] Estratti {len(claims)} claim e {len(related)} topic correlati dal post.")
+        print(f"\nEstratti {len(claims)} claim e {len(related)} topic correlati dal post.")
     except Exception as e:
-        print(f"[KG] Estrazione claim/related non riuscita ({e}): salvo senza arricchimento.")
+        print(f"\nEstrazione claim/related non riuscita ({e}): salvo senza arricchimento.")
 
-    # --- 4. SALVATAGGIO nel Knowledge Graph ---
-    # TOPIC CANONICO deterministico: chiave breve e normalizzata (marca+modello/soggetto),
-    # derivata dal TEMA PULITO (current_topic dal planner), NON dall'user_input grezzo che puo'
-    # contenere il dialogo di chiarimento. Garantisce che post sullo STESSO soggetto aggancino
-    # lo stesso nodo Topic -> la gap-analysis riconosce i doppioni.
-    # Il TITOLO resta la stringa editoriale lunga (titolo dell'articolo).
+    # Normalizzo la chiave come sopra, prendendola dal briefing e non dall'input
+    # dell'utente che può contenere la conversazione con i chiarimenti.
+    # Garantisco che post con lo stesso argomento aggancino lo stesso nodo Topic,
+    # così la gap-analysis riconosce i doppioni.
     canon = canonical_topic(topic) or canonical_topic(state.get("research_brief", ""))
-    print(f"[KG] Salvataggio del post '{post_title}' (topic canonico: '{canon}') nel Knowledge Graph...")
+    print(f"\nSalvataggio del post '{post_title}' (topic canonico: '{canon}') nel Knowledge Graph.")
     result = update_kg_data(
         topic=canon,
         post_title=post_title,
@@ -712,41 +711,41 @@ def update_kg_node(state: dict) -> Command[Literal["__end__"]]:
         seo_score=seo_score,
         cover_image=cover_path,
     )
-    print(f"[KG] {result}")
+    print(f"\n{result}")
 
     return Command(goto=END, update={
         "status": "completed",
-        "reasoning_trace": trace(state, "FASE 5 - Post pubblicato (copertina + SEO + salvataggio KG)."),
+        "reasoning_trace": trace(state, "\nPost pubblicato (copertina + SEO + salvataggio KG)."),
     })
 
 
-# ============================================================
-# NODO TOOL RESILIENTE
-# ============================================================
+# Questo nodo sostituisce il ToolNode di LangGraph standard. Quando il modello
+# chiama un tool errato o solleva un'eccezione, questo nodo non blocca il grafo
+# ma restituisce un ToolMessage di errore, in modo che l'agente possa correggersi nel
+# turno successivo.
+
 def resilient_tool_node(state: dict):
-    """
-    Sostituisce il ToolNode standard: se il modello chiama un tool inesistente o il
-    tool solleva un'eccezione, NON fa crashare il grafo. Restituisce invece un
-    ToolMessage di errore come "Observation", cosi' l'agente ReAct puo' correggersi.
-    """
     last = state["messages"][-1]
     tool_calls = getattr(last, "tool_calls", None) or []
     outputs = []
     raw_notes_collected = []
     available = ", ".join(tools_by_name.keys())
 
-    # Tool il cui output grezzo vale la pena conservare come "raw note" (grounding).
-    # think_tool e i tool di sola lettura KG NON sono fonti, quindi esclusi.
+    # Tool da cui recuperare le fonti (raw_notes) per il grounding. 
+    # Sono esclusi i tool che non ritornano dati utili al grounding
+    # come i tool di sola lettura del KG.
     _GROUNDING_TOOL_NAMES = {
         "mcp_web_search", "fetch_vehicle_specs", "compare_vehicles",
         "compare_vehicles_tool", "fetch_automotive_trends", "retrieve_local_documents",
     }
 
-    # LIMITE RICERCHE WEB: strategia "1 ricerca ricca"
+    # Limite di ricerche web per ciclo. Ogni ricerca impiega circa 40/60 secondi.
+    # Se non limitassi questa cosa, l'agente potrebbe continuamente chiamare il tool
+    # di ricerca web (perché autogiudica le fonti come non attendibili) andando in loop.
+    # Una volta esaurite le ricerche, l'agente è costretto a lavorare con ciò che ha.
+    # Il contatore lo azzero quando arriviamo nel nodo revisione e in particolare
+    # quando l'utente vuole elementi aggiuntivi nel post (e non un nuovo drafting).
     MAX_WEB_SEARCHES = 2
-    # Contatore resettabile dallo stato (NON ricontiamo i messaggi storici: dopo una
-    # modifica con ricerca il contatore viene azzerato in review_node, dando al nuovo
-    # giro il proprio budget). Fallback: se assente, lo deriviamo dai messaggi correnti.
     web_done = state.get("web_search_count")
     if web_done is None:
         web_done = sum(
@@ -761,15 +760,16 @@ def resilient_tool_node(state: dict):
         tool = tools_by_name.get(name)
 
         if config.debug:
-            print(f"\n[DIAG] tool_call -> nome='{name}' | args={args}")
+            print(f"\nChiamato il tool: '{name}' | args={args}")
 
-        # NORMALIZZAZIONE DIFENSIVA degli argomenti
+
         args = normalize_tool_args(name, args)
 
-        # ARRICCHIMENTO SPECIFICO per fetch_vehicle_specs: se car_model non contiene
-        # uno spazio (es. "TRK502X" invece di "Benelli TRK502X"), il modello ha omesso
-        # il brand. Proviamo a recuperarlo dal current_topic, che di solito contiene
-        # il nome completo (es. "Recensione Tecnica della TRK502X ... Benelli").
+        # Spesso il modelo omette il brand, significa che quando
+        # chiama il fetch_vehicle_specs, non mette il brand nel car_model.
+        # Per ovviare a questo problema, cerco il topic e provo a estrarre il brand.
+        # Filtro le parole italiane comuni e tra i candidati rimasti scelgo quello
+        # più vicino al modello nel testo. 
         if name == "fetch_vehicle_specs":
             car_model = args.get("car_model", "")
             if car_model and " " not in car_model.strip():
@@ -785,8 +785,7 @@ def resilient_tool_node(state: dict):
                         "tra", "fra", "come", "cosa", "chi", "perche", "panoramica",
                         "approfondimento", "storia", "caratteristiche", "specifiche",
                     }
-                    # Raccogliamo TUTTI i candidati brand (no apostrofi, no parole comuni,
-                    # maiuscola iniziale, non il codice modello stesso)
+                    # Raccogliamo tutti i possibili candidati al brand.
                     candidates = []
                     for word in topic.split():
                         clean = word.strip(":,;.()\"'")
@@ -798,13 +797,12 @@ def resilient_tool_node(state: dict):
                                 and len(clean) > 2):
                             candidates.append(clean)
                     if candidates:
-                        # Scegliamo il candidato PIU' VICINO al codice modello nel topic
-                        # (il brand di solito appare adiacente al modello)
+                        # Scegliamo il candidato più vicino al codice modello nel topic
                         model_pos = topic.lower().find(car_model.lower())
                         best = min(candidates,
                                    key=lambda c: abs(topic.lower().find(c.lower()) - model_pos))
                         enriched = f"{best} {car_model}"
-                        print(f"[Tool] car_model arricchito: '{car_model}' -> '{enriched}' (brand dal topic).")
+                        print(f"Aggiunto il brand al modello: '{car_model}' -> '{enriched}' (brand dal topic).")
                         args = {**args, "car_model": enriched}
 
         # Applica il tetto alle ricerche web
@@ -814,7 +812,7 @@ def resilient_tool_node(state: dict):
                 "Usa le informazioni gia' raccolte (fonti locali e web) per scrivere la bozza, "
                 "senza altre ricerche."
             )
-            print(f"[Tool] Ricerca web SALTATA (limite {MAX_WEB_SEARCHES} raggiunto).")
+            print(f"\nRicerca web saltata perché il limite di {MAX_WEB_SEARCHES} ricerche è stato raggiunto.")
             outputs.append(ToolMessage(content=content, name=name, tool_call_id=call_id))
             continue
 
@@ -823,27 +821,26 @@ def resilient_tool_node(state: dict):
                 f"ERRORE: il tool '{name}' non esiste. "
                 f"Usa SOLO uno di questi tool, con il nome ESATTO: {available}."
             )
-            print(f"[Tool] Nome tool inesistente '{name}': restituisco errore recuperabile.")
+            print(f"\nNome tool inesistente '{name}'.")
         else:
             try:
                 content = str(tool.invoke(args))
                 if name == "mcp_web_search":
                     web_done += 1
             except Exception as e:
-                content = f"ERRORE durante l'esecuzione del tool '{name}': {e}. Riprova o usa un altro tool."
-                print(f"[Tool] Eccezione nel tool '{name}': {e}")
+                content = f"Errore durante l'esecuzione del tool '{name}': {e}. Riprova o usa un altro tool."
+                print(f"\nEccezione nel tool '{name}': {e}")
 
         msg = ToolMessage(content=content, name=name or "unknown", tool_call_id=call_id)
         outputs.append(msg)
 
-        # RAW NOTES (ispirato al notebook 2): conserviamo l'osservazione grezza dei
-        # tool di grounding, oltre al riassunto, per averne i dettagli al drafting.
+        # Se il tool è una fonte (grounding) allora salvo l'output grezzo del tool
+        # dentro le raw_notes per poi usarle nel nodo di stesura post.
         if name in _GROUNDING_TOOL_NAMES and content.strip() and "errore" not in content.lower()[:40]:
             raw_notes_collected.append(f"[{name}] {content}")
 
     new_state = {"messages": outputs, "web_search_count": web_done}
     if raw_notes_collected:
-        # operator.add non e' impostato sul campo: accodiamo manualmente al cumulato
         existing = state.get("raw_notes") or []
         new_state["raw_notes"] = existing + raw_notes_collected
     return new_state

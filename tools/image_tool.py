@@ -43,7 +43,7 @@ def _genera_flux(prompt: str, filepath: str) -> str:
 
     api_url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/{CF_MODEL}"
     headers = {"Authorization": f"Bearer {CF_API_TOKEN}"}
-    payload = {"prompt": prompt, "num_steps": 4}
+    payload = {"prompt": prompt, "num_steps": 6}
 
     response = requests.post(api_url, headers=headers, json=payload, timeout=120)
     if response.status_code != 200:

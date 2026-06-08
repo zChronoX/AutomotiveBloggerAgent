@@ -1,8 +1,14 @@
+"""
+Utility condivisa per il meccanismo del Self-RAG dell'agente.
+Decide quale output dei tool vanno valutati per qualità/rilevanza prima 
+di essere usati nei post.
+"""
+
 from pydantic import BaseModel, Field
 from typing import Literal, Optional
 
-# --- MODELLI STRUTTURATI PER L'LLM ---
-
+# Quando l'agente deve valutare se una fonte è rilevante per l'argomento o no.
+# Forzo il modello a scegliere esattamente tra si o no.
 class GradeDocuments(BaseModel):
     """Valuta la rilevanza dei documenti recuperati con un punteggio binario."""
     binary_score: Literal["yes", "no"] = Field(
@@ -10,50 +16,24 @@ class GradeDocuments(BaseModel):
     )
 
 
-# --- SELF-RAG: QUALI TOOL PRODUCONO FONTI DA VALUTARE ---
 
-# Whitelist ESPLICITA dei tool il cui output e' una FONTE che verra' citata nel
-# post e che quindi deve passare dal controllo di rilevanza/qualita' (Self-RAG).
-#
-# Razionale (utile anche per la relazione):
-#   - mcp_web_search          -> ricerca web esterna: unica fonte dal web aperto,
-#                                va gradata perche' i risultati possono essere
-#                                off-topic o di bassa qualita'.
-#
-# Volutamente ESCLUSI (non sono "fonti" da gradare col Self-RAG):
-#   - retrieve_local_documents-> RAG locale: i documenti sono CURATI dal blogger
-#                                (appunti, manuali, vecchi articoli), quindi sono
-#                                inherentemente rilevanti per il dominio del blog.
-#                                Il filtro per distanza in retriever.py (DISTANCE_THRESHOLD)
-#                                scarta gia' i chunk non pertinenti. Gradarli di nuovo
-#                                col Self-RAG (Granite 3B) introduce falsi negativi
-#                                (il modello piccolo non matcha il topic elaborato del
-#                                planner col contenuto tecnico dei documenti locali).
-#   - fetch_vehicle_specs     -> scheda tecnica (API Ninjas + Wikipedia): fonte FATTUALE
-#                                per il veicolo richiesto, inherentemente rilevante.
-#   - fetch_automotive_trends -> ispirazione/brainstorming, non grounding dell'articolo.
-#   - compare_vehicles        -> output strutturato del modello fine-tuned, non da gradare.
-#   - query_knowledge_graph / list_blog_topics / get_editorial_context / update_knowledge_graph
-#                             -> letture/scritture del KG, non documenti esterni da valutare.
-#   - generate_cover_image / analyze_seo_and_readability
-#                             -> output ausiliari, non fonti informative.
-#
-# Usare una whitelist (e non una blacklist) rende il default SICURO: qualsiasi
-# nuovo tool non elencato qui NON viene gradato finche' non lo aggiungiamo apposta.
+
+# Whitelist di tools da sottoporre al Self-RAG.
+# In pratica inseriamo qui i tool di ricerca di fonti esterne.
+# Escludiamo tool come retrieve_local_documents che recuperano dati da fonti curate.
+# Il fetch_vehicle_specs, a differenza del web search, restituisce sempre dati fattuali e verificati
+# quindi non ha senso sottoporlo al Self-RAG. Tra le fonti escludiamo anche i trend RSS che non sono fonti ma ispirazione
+# per il brainstorming.
+# I tool del KG perché riguardano letture e scritture interne al grafo e non c'è nulla da gradare
+# e i tool di generazione immagini e SEO che vengono usati solo alla fine per arricchire il post.
+
 GRADABLE_TOOLS = {
     "mcp_web_search",
 }
 
 
-# --- FUNZIONI DI SUPPORTO ---
-
+# Funzione che viene passata ai nodi del grafo per decidere se un tool va sottoposto al Self-RAG.
 def should_grade_tool(tool_name: Optional[str]) -> bool:
-    """
-    Restituisce True solo se l'output del tool e' una fonte da valutare col Self-RAG.
-
-    Robusta a input anomali: se tool_name e' None o vuoto restituisce False
-    (default sicuro: non gradare). Il confronto e' case-insensitive.
-    """
     if not tool_name:
         return False
     return tool_name.strip().lower() in GRADABLE_TOOLS

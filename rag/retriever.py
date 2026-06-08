@@ -63,7 +63,7 @@ def retrieve_local(query: str) -> str:
 
         # Diagnostica di debug non visibile di default (guardare l'env.)
         if _cfg.debug:
-            print("[DIAG RAG] distanze:", [round(s, 3) for _, s in scored])
+            print("Distanze RAG:", [round(s, 3) for _, s in scored])
 
         # Filtro per distanza (soglia di pertinenza)
         filtered = [(doc, s) for doc, s in scored if s <= DISTANCE_THRESHOLD]
@@ -77,7 +77,7 @@ def retrieve_local(query: str) -> str:
                 filtered = [(best_doc, best_dist)]
             else:
                 if _cfg.debug:
-                    print(f"[DIAG RAG] miglior distanza {best_dist:.3f} > fallback {FALLBACK_MAX}: nessuna fonte.")
+                    print(f"Miglior distanza RAG {best_dist:.3f} > fallback {FALLBACK_MAX}: nessuna fonte.")
                 return "Nessun documento locale pertinente trovato per questo tema."
 
         # Includiamo il nome del file e la distanza per la tracciabilita'

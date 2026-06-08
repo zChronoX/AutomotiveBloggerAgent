@@ -52,7 +52,7 @@ def route_after_research(state: dict) -> Literal["tools", "drafting_node", "forc
     if getattr(last, "tool_calls", None):
         n = sum(1 for m in state["messages"] if isinstance(m, ToolMessage))
         if n >= MAX_RESEARCH_STEPS:
-            print("[ReAct] Max passi di ricerca raggiunto, si passa alla stesura.")
+            print("Max passi di ricerca raggiunto, si passa alla stesura.")
             return "drafting_node"
         return "tools"
     # Il modello vuole passare alla stesura. Usiamo un guardrail: se non ha raccolto nessuna fonte

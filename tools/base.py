@@ -16,7 +16,6 @@ def get_react_tools() -> List[BaseTool]:
     from tools.specs_tool import fetch_vehicle_specs          # Specifiche veicoli
     from tools.compare_vehicles_tool import compare_vehicles_tool  # Comparazione veicoli
     from tools.trend_tool import fetch_automotive_trends      # Trend attuali
-    from tools.think_tool import think_tool                   # Think (ReAct)
 
     return [
         mcp_web_search,
@@ -24,7 +23,6 @@ def get_react_tools() -> List[BaseTool]:
         fetch_vehicle_specs,
         compare_vehicles_tool,
         fetch_automotive_trends,
-        think_tool,
     ]
 
 

@@ -132,11 +132,11 @@ Azione: Restituisce una lista di titoli recenti dal feed RSS. Usali per proporre
 # stendere un articolo o quando devi integrare i dati tecnici.
 
 VEHICLE_SPECS_PROMPT = """
-Scopo: Interroga Wikipedia Italia per estrarre la scheda tecnica completa, la storia e il background enciclopedico di UN SINGOLO veicolo.
-Input: car_model (stringa) — il nome completo del veicolo (es. 'Alfa Romeo Giulia', 'Ducati Panigale V4').
-Quando usarlo: USA QUESTO TOOL quando devi recuperare dati storici, cilindrate, anni di produzione, scheda tecnica o aneddoti di UN modello specifico. Serve per articoli monografici (recensioni) o per integrare dati tecnici nella stesura.
+Scopo: Recupera la scheda tecnica e il contesto enciclopedico di UN SINGOLO veicolo, combinando due fonti: API Ninja (dati tecnici strutturati: cilindrata, potenza, consumi, ecc.) e Wikipedia Italia (storia, background, descrizione del modello).
+Input: car_model (stringa) — il nome completo del veicolo richiesto dall'utente. Passa SEMPRE il veicolo di cui si sta parlando nella conversazione, non un esempio.
+Quando usarlo: USA QUESTO TOOL quando devi recuperare dati tecnici, cilindrate, anni di produzione, scheda tecnica o aneddoti storici di UN modello specifico. Serve per articoli monografici (recensioni) o per integrare dati tecnici nella stesura.
 ATTENZIONE: per CONFRONTARE due veicoli NON usare questo tool due volte — usa 'compare_vehicles' che fa il confronto completo in un'unica chiamata.
-Azione: Restituisce un riassunto strutturato con le specifiche estratte da Wikipedia.
+Azione: Restituisce un riassunto strutturato che unisce le specifiche tecniche (da API Ninja, quando disponibili) e la storia del modello (da Wikipedia).
 """
 
 
@@ -222,12 +222,3 @@ VINCOLI:
 - Non inventare specifiche tecniche non menzionate nei dati in ingresso."""
 
 
-# Prompt usato per il ragionamento esplicito del ciclo ReAct
-# sfrutta la reflection.
-
-THINK_TOOL_PROMPT = """Strumento di RIFLESSIONE strategica (Thought esplicito del ciclo ReAct).
-Usalo per fermarti ad analizzare i risultati ottenuti e pianificare il prossimo passo,
-PRIMA di decidere se cercare ancora o procedere alla stesura del post.
-Passa nel campo 'reflection' la tua analisi: cosa hai trovato, cosa manca, se basta per
-scrivere un buon articolo. Non esegue ricerche: serve solo a ragionare in modo esplicito
-e tracciabile. Usalo tipicamente DOPO una ricerca web e PRIMA di concludere."""
