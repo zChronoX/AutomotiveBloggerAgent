@@ -112,3 +112,65 @@ def update_kg_data(
     finally:
         if "driver" in locals():
             driver.close()
+
+
+# ============================================================
+# PROPOSTE EDITORIALI (:Proposal) - backlog del piano editoriale
+# Quando l'utente sceglie quali post scrivere, l'intera selezione viene salvata
+# SUBITO come nodi :Proposal (crash-safe): se l'agente si interrompe a meta', i post
+# non ancora scritti non vanno persi. Ogni post pubblicato con successo viene poi
+# rimosso dalle proposte (vedi remove_proposal, chiamata in update_kg_node).
+#
+# Scelta di design: la :Proposal tiene il topic come PROPRIETA' (topic_key) e NON crea
+# nodi Topic ne' relazioni. Cosi' la gap-analysis (che conta i :Post via COVERS_TOPIC)
+# non viene inquinata da proposte non ancora scritte. Il campo 'title' resta leggibile
+# per la presentazione; 'topic_key' e' la chiave canonica per il match/dedup/rimozione.
+# ============================================================
+def add_proposals(proposals: List[dict]) -> str:
+    """
+    Salva (o aggiorna) una lista di proposte editoriali come nodi :Proposal.
+    Ogni elemento e' un dict con: title, topic_key, category, justification.
+    Il MERGE su topic_key evita duplicati se lo stesso tema viene riproposto.
+    """
+    if not proposals:
+        return "Nessuna proposta da salvare."
+
+    query = """
+    UNWIND $items AS item
+    MERGE (pr:Proposal {topic_key: item.topic_key})
+    ON CREATE SET pr.title = item.title, pr.category = item.category,
+                  pr.justification = item.justification, pr.created_at = datetime()
+    ON MATCH  SET pr.title = item.title, pr.category = item.category,
+                  pr.justification = item.justification
+    """
+    try:
+        driver = get_db_driver()
+        with open_session(driver) as session:
+            session.run(query, items=proposals)
+        return f"Salvate {len(proposals)} proposte editoriali nel Knowledge Graph."
+    except Exception as e:
+        return f"Errore durante il salvataggio delle proposte: {str(e)}"
+    finally:
+        if "driver" in locals():
+            driver.close()
+
+
+def remove_proposal(topic_key: str) -> str:
+    """
+    Rimuove una proposta dal backlog (tipicamente perche' il post e' stato pubblicato
+    e quindi 'promosso' a :Post). Usa la chiave canonica topic_key.
+    """
+    if not topic_key:
+        return "Nessuna proposta da rimuovere (topic_key vuoto)."
+
+    query = "MATCH (pr:Proposal {topic_key: $k}) DETACH DELETE pr"
+    try:
+        driver = get_db_driver()
+        with open_session(driver) as session:
+            session.run(query, k=topic_key)
+        return f"Proposta '{topic_key}' rimossa dal backlog."
+    except Exception as e:
+        return f"Errore durante la rimozione della proposta: {str(e)}"
+    finally:
+        if "driver" in locals():
+            driver.close()

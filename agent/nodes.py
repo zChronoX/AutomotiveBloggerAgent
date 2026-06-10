@@ -51,13 +51,17 @@ from typing import Literal
 
 from langgraph.types import interrupt, Command
 from langgraph.graph import END
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage, RemoveMessage
 
 from .llm import llm, drafting_llm
-from .state import PlanningSchema, ClarifyWithUser, ResearchBrief, KGExtraction
+from .state import (
+    PlanningSchema, PostPlan, ClarifyWithUser, ResearchBrief, KGExtraction,
+    EditorialDecision, ProposalAction,
+)
 from .helpers import (
     trace, has_collected_sources, strip_reasoning_preamble, normalize_tool_args,
     wants_post, modification_needs_research, is_clearly_vague, canonical_topic,
+    extract_num_posts,
 )
 from config.settings import Configuration
 from prompts.system_prompts import (
@@ -66,12 +70,16 @@ from prompts.system_prompts import (
 from prompts.agent_prompts import (
     PLANNING_PROMPT, RESEARCH_KICKOFF, DRAFT_PROMPT,
     CLARIFICATION_PROMPT, BRIEF_PROMPT, KG_EXTRACTION_PROMPT,
+    REPLAN_ONE_PROMPT, PROPOSE_MORE_PROMPT,
 )
 from utils import should_grade_tool
 from tools.base import get_all_tools, get_react_tools
 # Funzioni pure del KG chiamate in modo deterministico nelle fasi obbligatorie
-from knowledge_graph.queries import kg_topics_overview, kg_topic_context, kg_related_topics
-from knowledge_graph.updater import update_kg_data
+from knowledge_graph.queries import (
+    kg_topics_overview, kg_topic_context, kg_related_topics, kg_pending_proposals,
+    kg_recent_posts, kg_proposed_titles,
+)
+from knowledge_graph.updater import update_kg_data, add_proposals, remove_proposal
 # Retrieval deterministico per il K-RAG (sia KG che RAG)
 from rag.retriever import retrieve_local
 # Tool di arricchimento eseguiti deterministicamente alla pubblicazione (post-approvazione)
@@ -251,6 +259,18 @@ def planner_node(state: dict):
     trends = state.get("trends_summary", "") or "Nessun trend disponibile."
     brief = state.get("research_brief", "") or "Nessun brief disponibile (usa la richiesta originale)."
 
+    # Contesto per la CONTINUITA' e per evitare doppioni/invenzioni:
+    # - i post gia' PUBBLICATI (titoli reali): se l'utente chiede un confronto/seguito con
+    #   "qualcosa di gia' trattato", il planner deve pescare un modello REALE da qui;
+    # - le PROPOSTE in sospeso: cosi' sa cosa c'e' gia' in backlog ed evita di riproporlo.
+    published_posts = kg_recent_posts() or "(nessun post pubblicato finora)"
+    pending_proposals = kg_proposed_titles() or "(nessuna proposta in sospeso)"
+
+    # Numero di post da pianificare estratto DINAMICAMENTE dalla richiesta dell'utente
+    # (es. "pianifica 4 post"). Se non specificato vale il default. E' il numero MASSIMO
+    # di proposte; quante scriverne lo decide l'utente al gate editoriale.
+    max_posts = extract_num_posts(user_input)
+
     planner_llm = llm.with_structured_output(PlanningSchema)
     prompt = PLANNING_PROMPT.format(
         background=default_background,
@@ -259,6 +279,9 @@ def planner_node(state: dict):
         trends=trends,
         brief=brief,
         user_input=user_input,
+        max_posts=max_posts,
+        published_posts=published_posts,
+        pending_proposals=pending_proposals,
     )
     try:
         plan = planner_llm.invoke([SystemMessage(content=prompt)])
@@ -269,13 +292,350 @@ def planner_node(state: dict):
         planned, reasoning = [], f"(Pianificazione strutturata non riuscita: {e})."
 
     current_topic = planned[0]["topic"] if planned else (user_input or "Argomento automotive")
-    print(f"\n{len(planned)} post pianificati. Tema scelto: {current_topic}")
+    print(f"\n{len(planned)} post pianificati (max richiesti: {max_posts}). Tema principale: {current_topic}")
     return {
         "planning_info": planned,
         "current_topic": current_topic,
+        "num_posts_requested": max_posts,
         "status": "planned",
         "reasoning_trace": trace(state, "\nPiano editoriale generato."),
     }
+    try:
+        plan = planner_llm.invoke([SystemMessage(content=prompt)])
+        # Convertiamo subito in dizionari
+        planned = [p.model_dump() for p in plan.planned_posts]
+        reasoning = plan.reasoning
+    except Exception as e:
+        planned, reasoning = [], f"(Pianificazione strutturata non riuscita: {e})."
+
+    current_topic = planned[0]["topic"] if planned else (user_input or "Argomento automotive")
+    print(f"\n{len(planned)} post pianificati (max richiesti: {max_posts}). Tema principale: {current_topic}")
+    return {
+        "planning_info": planned,
+        "current_topic": current_topic,
+        "num_posts_requested": max_posts,
+        "status": "planned",
+        "reasoning_trace": trace(state, "\nPiano editoriale generato."),
+    }
+
+
+# ============================================================
+# GATE EDITORIALE (FASE 2.5 - HITL dopo il planning)
+# Dopo il planner l'utente NON parte automaticamente a scrivere: rivede le proposte e
+# decide quali scrivere, quali modificare (con istruzioni), quali scartare e se vuole
+# proposte nuove per tornare al numero richiesto. Le selezionate vengono salvate subito
+# come backlog 'proposed' (crash-safe) e si entra nel ciclo di scrittura un post alla volta.
+# Il nodo si auto-instrada con Command: a se stesso (per ri-presentare il piano dopo le
+# modifiche), a research_agent (per iniziare a scrivere) o a END (annullamento).
+# ============================================================
+
+# Formatta la lista di proposte in modo numerato e leggibile (per la presentazione HITL).
+def _format_proposals(plan: list) -> str:
+    if not plan:
+        return "(nessuna proposta disponibile)"
+    out = []
+    for i, p in enumerate(plan, 1):
+        cat = p.get("post_category") or p.get("category") or "n/d"
+        out.append(f"{i}. [{cat}] {p.get('topic', '')}\n   Motivazione: {p.get('justification', '')}")
+    return "\n".join(out)
+
+
+# Converte un PostPlan (dict) nel formato di salvataggio del backlog proposte.
+# 'title' resta leggibile per la presentazione; 'topic_key' e' la chiave canonica usata
+# per il match/dedup e per la rimozione quando il post viene pubblicato.
+def _proposal_to_storage(p: dict) -> dict:
+    title = p.get("topic", "") or "(senza titolo)"
+    return {
+        "title": title,
+        "topic_key": canonical_topic(title),
+        "category": p.get("post_category") or p.get("category") or "news",
+        "justification": p.get("justification", ""),
+    }
+
+
+# Costruisce l'aggiornamento di stato per ripartire pulito su un NUOVO post.
+# Svuota il canale messaggi con rimozione per-id (compatibile con ogni versione di
+# langgraph, senza dipendere dal sentinel REMOVE_ALL_MESSAGES) e azzera tutti gli
+# accumulatori per-post. Imposta status='planned' cosi' research_agent rifa' il
+# kickoff K-RAG da zero sul nuovo topic.
+def _reset_for_new_post(state: dict, next_post: dict) -> dict:
+    removals = [RemoveMessage(id=m.id) for m in state.get("messages", []) if getattr(m, "id", None)]
+    topic = next_post.get("topic", "") if isinstance(next_post, dict) else ""
+    return {
+        "messages": removals,
+        "raw_notes": [],
+        "sources": [],
+        "local_sources": [],
+        "draft_content": "",
+        "web_search_count": 0,
+        "forced_web_search": False,
+        "revision_count": 0,
+        "human_feedback": None,
+        "current_post": next_post,
+        "current_topic": topic,
+        "status": "planned",
+    }
+
+
+# Verbi-chiave per il parsing DETERMINISTICO della decisione editoriale.
+# Scelta di design: NON usiamo il modello per capire QUALI proposte e QUALE operazione
+# (sui test il 3B sbagliava i numeri e ignorava il refill). Numeri e operazione si
+# ricavano con regex affidabili; il modello resta usato SOLO per rigenerare il testo
+# di una proposta o per generare quelle nuove, cioe' dove serve creativita'.
+_ED_DROP = ("scart", "elimin", "rimuov", "cancell", "togli il", "togli la", "togli i", "togli lo", "non mi interess", "leva il", "leva la")
+_ED_MODIFY = ("modific", "rendil", "rendet", "rendi ", "cambia", "trasform", "fallo", "falla", "fai un", "fai una", "allung", "accorci", "aggiungi", "invece", "confront", "recensi", "trasformal")
+_ED_WRITE = ("scriv", "tieni", "tien", "va bene", "vanno bene", "approv", "ok", "conferma", "procedi", "manten", "accett", "questi", "questo")
+# request_new: richiesta esplicita di NUOVE proposte (refill).
+_ED_NEW_RE = r"(propon\w*|rimpiazz\w*|sostitu\w*|aggiung\w*\s+(un|una|altr|nuov|altre|altri|qualc))"
+
+
+def _parse_editorial_decision(user_response: str, plan: list) -> EditorialDecision:
+    """
+    Interpreta in modo DETERMINISTICO la risposta dell'utente al gate editoriale.
+    Spezza la frase in clausole (separatori ; . a capo), e per ogni clausola ricava:
+    i numeri delle proposte coinvolte e l'operazione dal verbo usato. Per le modifiche
+    si prende SOLO il primo numero come bersaglio (gli altri fanno parte dell'istruzione,
+    es. 'rendilo un confronto con la BMW Serie 3'). Niente dipendenza dal modello qui:
+    e' la parte dove l'affidabilita' conta di piu'.
+    """
+    dec = EditorialDecision()
+    text = (user_response or "").strip()
+    if not text or not plan:
+        return dec
+    low = text.lower()
+    n_plan = len(plan)
+
+    def in_range(nums):
+        return [x for x in nums if 1 <= x <= n_plan]
+
+    # 1) Refill: segnale esplicito di nuove proposte (e relativo spunto, se presente).
+    m_new = re.search(_ED_NEW_RE, low)
+    if m_new:
+        dec.request_new = True
+        # Lo spunto e' la parte di frase attorno alla richiesta di novita' (clausola).
+        for clause in re.split(r"[;\n.]+", text):
+            if re.search(_ED_NEW_RE, clause.lower()):
+                dec.new_hint = clause.strip()
+                break
+
+    # 2) Azioni per-proposta, clausola per clausola.
+    seen = set()
+    for clause in re.split(r"[;\n.]+", text):
+        c = clause.strip()
+        if not c:
+            continue
+        cl = c.lower()
+        nums = in_range([int(x) for x in re.findall(r"\d+", c)])
+
+        # Una clausola di sola richiesta-nuove non e' un'azione su proposte esistenti.
+        if re.search(_ED_NEW_RE, cl) and not any(v in cl for v in _ED_DROP + _ED_MODIFY):
+            continue
+
+        if any(v in cl for v in _ED_DROP):
+            for x in nums:
+                if x not in seen:
+                    dec.actions.append(ProposalAction(index=x, action="drop")); seen.add(x)
+        elif any(v in cl for v in _ED_MODIFY):
+            if nums:
+                x = nums[0]  # solo il primo numero e' il bersaglio della modifica
+                if x not in seen:
+                    dec.actions.append(ProposalAction(index=x, action="modify", instruction=c)); seen.add(x)
+        elif any(v in cl for v in _ED_WRITE):
+            targets = nums
+            if not targets and re.search(r"tutt[ie]", cl):
+                targets = list(range(1, n_plan + 1))
+            for x in targets:
+                if x not in seen:
+                    dec.actions.append(ProposalAction(index=x, action="write")); seen.add(x)
+        elif nums:
+            # Numeri "nudi" senza verbo riconosciuto: li interpreto come "scrivi questi".
+            for x in nums:
+                if x not in seen:
+                    dec.actions.append(ProposalAction(index=x, action="write")); seen.add(x)
+
+    # 3) Fallback: "scrivili tutti"/"procedi"/"vanno bene" senza numeri -> scrivi TUTTE.
+    if not dec.actions and not dec.request_new:
+        if (re.search(r"tutt[ie]", low) or re.search(r"procedi|vanno bene|va bene|conferma|approv", low)) \
+           and not any(v in low for v in _ED_DROP) and not any(v in low for v in _ED_MODIFY):
+            dec.actions = [ProposalAction(index=i + 1, action="write") for i in range(n_plan)]
+
+    return dec
+
+
+# Rigenera UNA singola proposta applicando l'istruzione dell'utente. Le proposte che
+# l'utente non chiede di modificare non passano mai di qui: restano identiche.
+def _regenerate_proposal(orig: dict, instruction: str, brief: str, kg_overview: str, published_posts: str = "") -> dict:
+    gen = llm.with_structured_output(PostPlan)
+    prompt = REPLAN_ONE_PROMPT.format(
+        topic=orig.get("topic", ""),
+        category=orig.get("post_category") or orig.get("category") or "",
+        justification=orig.get("justification", ""),
+        brief=brief or "Nessun brief.",
+        kg_overview=kg_overview or "Nessuna copertura nota.",
+        published_posts=published_posts or "(nessun post pubblicato finora)",
+        instruction=instruction,
+    )
+    return gen.invoke([SystemMessage(content=prompt)]).model_dump()
+
+
+# Genera k proposte AGGIUNTIVE per il refill, evitando i temi gia' tenuti o scartati.
+# 'hint' e' un eventuale spunto specifico dell'utente (es. 'confronto con la BMW M3').
+def _propose_more(k: int, brief: str, kg_overview: str, trends: str, exclude: list, hint: str = "", published_posts: str = "") -> list:
+    gen = llm.with_structured_output(PlanningSchema)
+    excl = "; ".join([e for e in exclude if e]) or "(nessuno)"
+    prompt = PROPOSE_MORE_PROMPT.format(
+        k=k, brief=brief or "Nessun brief.", kg_overview=kg_overview or "Nessuna copertura nota.",
+        published_posts=published_posts or "(nessun post pubblicato finora)",
+        trends=trends or "Nessun trend.", exclude=excl,
+    )
+    if hint:
+        prompt += f"\n\nSpunto specifico richiesto dall'utente per le nuove proposte: {hint}"
+    res = gen.invoke([SystemMessage(content=prompt)])
+    return [p.model_dump() for p in res.planned_posts][:k]
+
+
+def editorial_review_node(state: dict) -> Command[Literal["editorial_review_node", "research_agent", "__end__"]]:
+    plan = state.get("planning_info") or []
+    n = state.get("num_posts_requested") or (len(plan) or 3)
+
+    # Presentazione (codice eseguito anche ad ogni ripresa dell'interrupt: e' puro).
+    shortfall = max(0, n - len(plan))
+    legend = (
+        "Cosa vuoi fare? Esempi:\n"
+        "- \"scrivi 1 e 3\"\n"
+        "- \"scrivi 1; il 2 rendilo un confronto con la BMW Serie 3; scarta il 3\"\n"
+        "- \"scrivili tutti\"   - \"annulla\""
+    )
+    if shortfall > 0:
+        legend += (
+            f"\n\nHai {len(plan)} proposte attive (ne avevi chieste {n}). Puoi dirmi "
+            f"\"proponi nuove\" per riportarle a {n}, oppure procedere con queste."
+        )
+    description = "# Proposte editoriali\n\n" + _format_proposals(plan) + "\n\n" + legend
+
+    request = {
+        "action_request": {"action": "review_editorial_plan", "args": {}},
+        "config": {
+            "allow_accept": False, "allow_respond": True,
+            "allow_ignore": True, "allow_edit": False,
+        },
+        "description": description,
+    }
+    answer = interrupt(request)
+    rtype = answer.get("type") if isinstance(answer, dict) else None
+
+    if rtype == "ignore":
+        print("\nPianificazione annullata: niente da scrivere e niente salvato.")
+        return Command(goto=END, update={"status": "planning_cancelled"})
+
+    if not plan:
+        print("\nNessuna proposta disponibile: chiudo.")
+        return Command(goto=END, update={"status": "planning_cancelled"})
+
+    user_response = (answer.get("args", "") if isinstance(answer.get("args"), str)
+                     else str(answer.get("args", "")))
+    decision = _parse_editorial_decision(user_response, plan)
+
+    # Validazione e smistamento delle azioni (mostrate 1-based -> interne 0-based).
+    # Da un'unica lista di azioni ricaviamo i tre insiemi che servono al resto del nodo.
+    # In caso di indice duplicato vince l'ultima azione indicata per quella proposta.
+    total = len(plan)
+    action_by_idx = {}
+    for a in (decision.actions or []):
+        if 1 <= a.index <= total and a.action in ("write", "modify", "drop"):
+            action_by_idx[a.index - 1] = (a.action, (a.instruction or "").strip())
+    write_idx = sorted([i for i, (act, _) in action_by_idx.items() if act == "write"])
+    drop_idx = {i for i, (act, _) in action_by_idx.items() if act == "drop"}
+    # Una 'modify' senza istruzione non e' azionabile: la tratto come approvazione.
+    modify = [(i, instr) for i, (act, instr) in action_by_idx.items() if act == "modify" and instr]
+    write_idx = sorted(set(write_idx) | {i for i, (act, instr) in action_by_idx.items() if act == "modify" and not instr})
+    request_new = bool(decision.request_new)
+    structural = bool(modify or drop_idx or request_new)
+
+    if not write_idx and not structural:
+        print("\nNon ho capito la scelta: ripropongo il piano. (Suggerimento: indica i numeri "
+              "delle proposte con scrivi/modifica/scarta. Se invece vuoi fare una richiesta "
+              "diversa, digita 'annulla' e riformulala dal prompt principale.)")
+        return Command(goto="editorial_review_node")
+
+    brief = state.get("research_brief", "") or ""
+    kg_overview = state.get("kg_summary", "") or ""
+    trends = state.get("trends_summary", "") or "Nessun trend disponibile."
+    # Titoli reali dei post gia' pubblicati: servono a modify/refill per riferirsi a
+    # modelli REALI (continuita') invece di inventarne (es. "Giulia Quattrosotto").
+    published_posts = kg_recent_posts() or "(nessun post pubblicato finora)"
+
+    # Cambiamenti STRUTTURALI espliciti (modifica/scarto/refill): applico e RI-PRESENTO.
+    if structural:
+        new_plan = list(plan)
+        for i, instr in modify:
+            try:
+                new_plan[i] = _regenerate_proposal(new_plan[i], instr, brief, kg_overview, published_posts)
+                print(f"\nProposta {i + 1} rigenerata con la modifica richiesta.")
+            except Exception as e:
+                print(f"\nRigenerazione proposta {i + 1} non riuscita ({e}): la lascio invariata.")
+
+        rejected = list(state.get("rejected_topics") or [])
+        for i in sorted(drop_idx):
+            rejected.append(canonical_topic(plan[i].get("topic", "")))
+        kept_plan = [p for j, p in enumerate(new_plan) if j not in drop_idx]
+
+        if request_new:
+            k = max(0, n - len(kept_plan))
+            if k > 0:
+                exclude = [p.get("topic", "") for p in kept_plan] + [t for t in rejected if t]
+                try:
+                    extra = _propose_more(k, brief, kg_overview, trends, exclude,
+                                          hint=decision.new_hint, published_posts=published_posts)
+                    kept_plan = kept_plan + extra
+                    print(f"\nAggiunte {len(extra)} nuove proposte (refill).")
+                except Exception as e:
+                    print(f"\nRefill non riuscito ({e}).")
+
+        return Command(goto="editorial_review_node", update={
+            "planning_info": kept_plan,
+            "rejected_topics": [t for t in rejected if t],
+            "reasoning_trace": trace(state, "Gate editoriale: piano aggiornato (modifiche/scarti/refill)."),
+        })
+
+    # --- Turno di SOLA SELEZIONE ---
+    # Invariante robusta (indipendente dal fatto che il modello emetta o meno 'drop'):
+    # si finalizza SOLO se l'utente seleziona TUTTE le proposte mostrate. Se ne seleziona
+    # un sottoinsieme, le altre sono considerate scartate, il piano si riduce e lo
+    # ri-presento: a quel punto, essendo sceso sotto N, compare la domanda del refill.
+    selected_idx = sorted(set(write_idx))
+    if not selected_idx:
+        return Command(goto="editorial_review_node")
+
+    if set(selected_idx) != set(range(len(plan))):
+        # Sottoinsieme: scarto le non selezionate (le ricordo per non riproporle) e riduco.
+        rejected = list(state.get("rejected_topics") or [])
+        for j, p in enumerate(plan):
+            if j not in selected_idx:
+                rejected.append(canonical_topic(p.get("topic", "")))
+        reduced = [plan[i] for i in selected_idx]
+        print(f"\nTengo {len(reduced)} proposte; le altre le ho scartate.")
+        return Command(goto="editorial_review_node", update={
+            "planning_info": reduced,
+            "rejected_topics": [t for t in rejected if t],
+            "reasoning_trace": trace(state, "Gate editoriale: selezione ridotta, ripropongo (eventuale refill)."),
+        })
+
+    # L'utente ha selezionato TUTTE le proposte mostrate -> finalizzo.
+    # Salvo l'intera selezione come backlog 'proposed' (crash-safe) e parto col primo post.
+    selected = list(plan)
+    try:
+        print(f"\n{add_proposals([_proposal_to_storage(p) for p in selected])}")
+    except Exception as e:
+        print(f"\nSalvataggio proposte non riuscito ({e}).")
+
+    queue = list(selected)
+    first = queue.pop(0)
+    reset = _reset_for_new_post(state, first)
+    reset["selected_posts"] = queue
+    reset["reasoning_trace"] = trace(state, f"Gate editoriale: {len(selected)} post selezionati.")
+    print(f"\n{len(selected)} post selezionati. Inizio a scrivere: {first.get('topic', '')}")
+    return Command(goto="research_agent", update=reset)
 
 
 # Metodo usato quando l'utente vuole un suggerimento. Sfrutto il planner node per
@@ -284,20 +644,39 @@ def suggest_topics_node(state: dict):
     plan = state.get("planning_info") or []
     trends = state.get("trends_summary", "")
 
+    # Ordine di PRIORITA' richiesto: prima le proposte in sospeso (recuperabili da piani
+    # precedenti), poi il nuovo calendario editoriale, infine il feed RSS come ripiego.
+    parts = []
+
+    # 1) Proposte in sospeso (proposed) -> priorita' massima.
+    pending = kg_pending_proposals()
+    if pending:
+        parts.append(pending)
+
+    # 2) Nuovo calendario editoriale proposto dal planner.
     if plan:
         out = ["Proposta di calendario editoriale:\n"]
         for i, p in enumerate(plan, 1):
             out.append(f"{i}. [{p['post_category']}] {p['topic']}\n   Motivazione: {p['justification']}")
-        text = "\n".join(out)
-    else:
-        text = "Non sono riuscito a pianificare. Specifica meglio l'area tematica."
+        parts.append("\n".join(out))
+    elif not pending:
+        # Niente di pianificato e nessuna proposta in sospeso: chiedo di precisare.
+        parts.append("Non sono riuscito a pianificare. Specifica meglio l'area tematica.")
 
+    # 3) Feed RSS come alternativa, solo come ripiego rispetto ai punti sopra.
     if trends:
-        text += f"\n\nNotizie estratte dal feed RSS:\n{trends}"
+        parts.append(
+            "Se i post in sospeso e quelli del calendario editoriale non dovessero "
+            "piacerti, possiamo partire da una di queste notizie fresche dal feed RSS:\n"
+            + trends
+        )
+
+    text = "\n\n".join(parts) if parts else "Non ho proposte da mostrare al momento."
+
     return {
         "messages": [AIMessage(content=text)],
         "status": "topics_suggested",
-        "reasoning_trace": trace(state, "Presentati i topic suggeriti."),
+        "reasoning_trace": trace(state, "Presentati i topic suggeriti (proposte in sospeso prioritarie)."),
     }
 
 
@@ -550,7 +929,7 @@ def drafting_node(state: dict):
 # - response -> feedback testuale: si torna in stesura applicando le modifiche.
 # - ignore -> scarta: si termina senza aggiornare il KG.
 # - edit -> modifica la bozza: si torna in stesura applicando le modifiche.
-def review_node(state: dict) -> Command[Literal["update_kg_node", "drafting_node", "research_agent", "__end__"]]:
+def review_node(state: dict) -> Command[Literal["update_kg_node", "drafting_node", "revision_research_node", "next_post_node"]]:
     draft = state.get("draft_content", "(nessuna bozza)")
     revisions = state.get("revision_count") or 0
 
@@ -585,8 +964,11 @@ def review_node(state: dict) -> Command[Literal["update_kg_node", "drafting_node
         )
 
     if rtype == "ignore":
-        print("\nBozza scartata, termino senza aggiornare il KG.")
-        return Command(goto=END, update={"human_feedback": "ignore", "status": "discarded"})
+        # Bozza scartata: il post NON viene pubblicato, quindi resta nel backlog come
+        # proposta (non lo rimuovo) ed e' recuperabile. Vado al gate 'prossimo post'
+        # invece di terminare, cosi' se restano selezionati l'utente decide se proseguire.
+        print("\nBozza scartata: non aggiorno il KG. Il post resta tra le proposte.")
+        return Command(goto="next_post_node", update={"human_feedback": "ignore", "status": "discarded"})
 
     # Qualsiasi feedback testuale mi fa tornare nella fase di drafting o in quella di research se serve.
     feedback = (
@@ -636,12 +1018,17 @@ def review_node(state: dict) -> Command[Literal["update_kg_node", "drafting_node
 # recupero lo stato del grafo, come topic, categoria, draft e fonti.
 # Genero l'immagine di copertina, analisi SEO e estraggo claim correlati e argomenti correlati
 # per il KG.
-def update_kg_node(state: dict) -> Command[Literal["__end__"]]:
+def update_kg_node(state: dict) -> Command[Literal["next_post_node"]]:
     topic = state.get("current_topic") or "argomento automotive"
-    plan = state.get("planning_info") or []
-    category = "news"
-    if plan and isinstance(plan[0], dict):
-        category = plan[0].get("post_category", "news")
+    # La categoria viene dal POST CORRENTE: col ciclo multi-post il post in scrittura
+    # puo' non essere il primo del piano. Fallback su planning_info[0] per sicurezza.
+    current = state.get("current_post") or {}
+    category = current.get("post_category") or current.get("category")
+    if not category:
+        plan = state.get("planning_info") or []
+        if plan and isinstance(plan[0], dict):
+            category = plan[0].get("post_category", "news")
+    category = category or "news"
 
     draft = state.get("draft_content", "") or ""
     sources = state.get("sources") or []
@@ -713,10 +1100,91 @@ def update_kg_node(state: dict) -> Command[Literal["__end__"]]:
     )
     print(f"\n{result}")
 
-    return Command(goto=END, update={
+    # Il post e' pubblicato: lo 'promuovo' rimuovendolo dal backlog delle proposte
+    # (se proveniva dal piano). Cosi' non ricompare tra le proposte pendenti.
+    try:
+        print(f"\n{remove_proposal(canon)}")
+    except Exception as e:
+        print(f"\nRimozione proposta non riuscita ({e}).")
+
+    # Non termino: vado al gate 'prossimo post'. Se restano post selezionati, l'utente
+    # decide se continuare, con quale, o fermarsi (i rimanenti restano come proposte).
+    return Command(goto="next_post_node", update={
         "status": "completed",
         "reasoning_trace": trace(state, "\nPost pubblicato (copertina + SEO + salvataggio KG)."),
     })
+
+
+# ============================================================
+# GATE "PROSSIMO POST" (HITL nel ciclo di scrittura multi-post)
+# Dopo ogni post (pubblicato in update_kg_node o scartato in review_node) si passa di
+# qui. Se restano post selezionati, l'agente si ferma e chiede all'utente se continuare,
+# con quale post, o fermarsi. Se si ferma, i rimanenti restano salvati come proposte nel
+# KG (gia' inseriti alla selezione) ed e' tutto recuperabile. Niente avanzamento
+# automatico: e' l'utente a guidare il ritmo (gestione dei tempi di esecuzione locale).
+# ============================================================
+
+# Sceglie quale post della coda scrivere in base alla risposta dell'utente:
+# un numero esplicito, un match sul topic, altrimenti il primo.
+def _pick_next_index(text: str, queue: list) -> int:
+    if not text or not queue:
+        return 0
+    low = text.lower()
+    m = re.search(r"\b(\d+)\b", low)
+    if m:
+        idx = int(m.group(1)) - 1
+        if 0 <= idx < len(queue):
+            return idx
+    for i, p in enumerate(queue):
+        topic = (p.get("topic", "") or "").lower()
+        if topic and (topic in low or any(w in low for w in topic.split()[:2] if len(w) > 3)):
+            return i
+    return 0
+
+
+def next_post_node(state: dict) -> Command[Literal["research_agent", "__end__"]]:
+    queue = list(state.get("selected_posts") or [])
+    if not queue:
+        print("\nTutti i post selezionati sono stati gestiti. Chiudo.")
+        return Command(goto=END, update={"status": "completed_all"})
+
+    listing = "\n".join(
+        f"{i + 1}. [{p.get('post_category') or p.get('category') or 'n/d'}] {p.get('topic', '')}"
+        for i, p in enumerate(queue)
+    )
+    description = (
+        "# Post selezionati ancora da scrivere\n\n" + listing +
+        "\n\nVuoi continuare? Indica QUALE scrivere ora (es. \"scrivi il 2\", oppure "
+        "\"continua\" per il primo), oppure fermati: i rimanenti restano salvati come proposte."
+    )
+    request = {
+        "action_request": {"action": "continue_writing", "args": {}},
+        "config": {
+            "allow_accept": True, "allow_respond": True,
+            "allow_ignore": True, "allow_edit": False,
+        },
+        "description": description,
+    }
+    answer = interrupt(request)
+    rtype = answer.get("type") if isinstance(answer, dict) else None
+
+    if rtype == "ignore":
+        print("\nMi fermo qui: i post rimasti restano salvati come proposte nel KG.")
+        return Command(goto=END, update={"status": "stopped_with_pending"})
+
+    # accept -> primo della coda; response -> interpreto quale post scrivere ora.
+    chosen = 0
+    if rtype == "response":
+        text = (answer.get("args", "") if isinstance(answer.get("args"), str)
+                else str(answer.get("args", "")))
+        chosen = _pick_next_index(text, queue)
+
+    next_post = queue.pop(chosen)
+    reset = _reset_for_new_post(state, next_post)
+    reset["selected_posts"] = queue
+    reset["reasoning_trace"] = trace(state, f"Proseguo col prossimo post: {next_post.get('topic', '')}.")
+    print(f"\nProseguo con: {next_post.get('topic', '')}")
+    return Command(goto="research_agent", update=reset)
 
 
 # Questo nodo sostituisce il ToolNode di LangGraph standard. Quando il modello
@@ -843,4 +1311,17 @@ def resilient_tool_node(state: dict):
     if raw_notes_collected:
         existing = state.get("raw_notes") or []
         new_state["raw_notes"] = existing + raw_notes_collected
+
+    # Registro le OBSERVATION nel reasoning trace: chiude il ciclo ReAct esplicito
+    # (Thought -> Action -> Observation) richiesto dalle specifiche. Il Thought e
+    # l'Action vengono gia' tracciati in research_agent_node; qui aggiungo l'esito
+    # sintetico di ogni tool eseguito, cosi' la giustificazione e l'effetto di ogni
+    # invocazione sono leggibili nel trace senza dover scorrere i messages.
+    if outputs:
+        obs_lines = []
+        for out_msg in outputs:
+            name = getattr(out_msg, "name", "tool")
+            content = str(getattr(out_msg, "content", ""))[:220].replace("\n", " ")
+            obs_lines.append(f"Observation ({name}): {content}")
+        new_state["reasoning_trace"] = trace(state, "\n".join(obs_lines))
     return new_state

@@ -80,6 +80,43 @@ class PlanningSchema(BaseModel):
 
 
 # ============================================================
+# SCHEMA DI REVISIONE EDITORIALE (gate HITL dopo il planning)
+# Interpreta in modo strutturato la risposta in linguaggio naturale dell'utente
+# davanti alla lista di proposte. Scelta di design: invece di piu' liste separate
+# (di cui una annidata), usiamo UNA SOLA lista di azioni, una per proposta menzionata,
+# con un'azione esplicita (write/modify/drop). Per un modello piccolo e' molto piu'
+# affidabile scegliere un enum per ogni proposta che decidere in quale lista mettere
+# un indice: prima il 3B tendeva a buttare tutto in 'to_write' ignorando le modifiche.
+# ============================================================
+class ProposalAction(BaseModel):
+    """Azione decisa dall'utente su UNA singola proposta, identificata dal suo numero."""
+    index: int = Field(description="Il NUMERO della proposta come mostrato nella lista (1-based)")
+    action: Literal["write", "modify", "drop"] = Field(
+        description="write = scrivila cosi' com'e'; modify = cambiala (serve instruction); drop = scartala"
+    )
+    instruction: str = Field(
+        default="",
+        description="SOLO se action='modify': cosa cambiare di questa proposta (l'istruzione dell'utente)"
+    )
+
+
+class EditorialDecision(BaseModel):
+    """Decisione editoriale dell'utente: una voce per ogni proposta che ha menzionato."""
+    actions: List[ProposalAction] = Field(
+        default_factory=list,
+        description="Una ProposalAction per ogni proposta che l'utente vuole scrivere, modificare o scartare"
+    )
+    request_new: bool = Field(
+        default=False,
+        description="True SOLO se l'utente chiede esplicitamente nuove proposte/di rimpiazzare le scartate"
+    )
+    new_hint: str = Field(
+        default="",
+        description="Eventuale spunto specifico per le nuove proposte (es. 'confronto con la BMW M3')"
+    )
+
+
+# ============================================================
 # INPUT / STATO (requisito "MCP / State Management")
 # ============================================================
 class StateInput(TypedDict):
@@ -129,6 +166,21 @@ class State(MessagesState):
     # Pianificazione / topic
     current_topic: Optional[str]
     planning_info: Optional[List[dict]]
+
+    # --- Pianificazione multi-post (gate editoriale + ciclo di scrittura) ---
+    # Numero massimo di post richiesto dall'utente (dinamico, estratto dalla richiesta).
+    # Serve al refill: se scarto proposte e scendo sotto questo numero, l'agente puo'
+    # propormene di nuove per tornare a questo target.
+    num_posts_requested: Optional[int]
+    # Coda dei post che l'utente ha scelto di scrivere (lista di PostPlan come dict).
+    # Viene consumata un post alla volta dal ciclo di scrittura.
+    selected_posts: Optional[List[dict]]
+    # Il PostPlan del post attualmente in scrittura (per leggere categoria/giustificazione
+    # corrette, invece di assumere sempre planning_info[0]).
+    current_post: Optional[dict]
+    # Topic gia' scartati dall'utente nel gate editoriale: il refill li evita per non
+    # riproporre cose che l'utente ha gia' rifiutato.
+    rejected_topics: Optional[List[str]]
 
     # Knowledge Graph
     kg_summary: Optional[str]

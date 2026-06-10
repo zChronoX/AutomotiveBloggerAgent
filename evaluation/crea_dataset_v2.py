@@ -10,7 +10,7 @@ client = Client()
 
 dataset_name = "AutomotiveBloggerAgent V2"
 dataset_description = (
-    "Dataset esteso per la valutazione finale del AutomotiveBloggerAgent.
+    "Dataset esteso per la valutazione finale del AutomotiveBloggerAgent."
     "Copre tutte le casistiche: confronti tra veicoli (compare_vehicles + modello "
     "fine-tuned), post tecnici (RAG locale), attualita' (web search + guardrail fonti), "
     "recensioni (fetch_vehicle_specs), suggerimento argomenti (gap-analysis del KG) e casi "

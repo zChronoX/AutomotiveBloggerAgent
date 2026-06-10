@@ -194,3 +194,78 @@ def kg_related_topics(topic: str) -> list[str]:
         return [r["related"] for r in rows if r["related"]]
     except Exception:
         return []
+
+
+# Lettura del backlog di proposte (:Proposal) non ancora scritte.
+# Usata da suggest_topics_node: quando l'utente chiede "di cosa parliamo oggi", le
+# proposte rimaste in sospeso da piani precedenti rientrano in gioco, in ordine di
+# creazione (cosi' possono essere recuperate e scritte piu' avanti).
+@traceable(run_type="retriever", name="kg_pending_proposals")
+def kg_pending_proposals() -> str:
+    """
+    Restituisce le proposte editoriali pendenti, formattate, ordinate dalla piu' vecchia.
+    Stringa vuota se non ce ne sono (cosi' il chiamante puo' semplicemente non mostrarle).
+    """
+    query = """
+    MATCH (pr:Proposal)
+    RETURN pr.title AS title, pr.category AS category,
+           pr.justification AS justification, pr.created_at AS created_at
+    ORDER BY pr.created_at ASC
+    """
+    try:
+        rows = run_read(query)
+        if not rows:
+            return ""
+        lines = ["Proposte in sospeso da piani precedenti (recuperabili):"]
+        for i, r in enumerate(rows, 1):
+            cat = r.get("category") or "n/d"
+            title = r.get("title") or "(senza titolo)"
+            just = r.get("justification") or ""
+            lines.append(f"{i}. [{cat}] {title}" + (f"\n   Motivazione: {just}" if just else ""))
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Errore durante la lettura delle proposte: {str(e)}"
+
+
+# Elenco COMPATTO dei post gia' pubblicati di recente (titoli reali + categoria), usato
+# dal planner per la CONTINUITA': quando l'utente chiede un confronto/seguito con qualcosa
+# "gia' trattato", il planner deve riferirsi a un modello REALE preso da qui, non inventarne
+# uno. Restituisce stringa vuota se non c'e' nulla.
+@traceable(run_type="retriever", name="kg_recent_posts")
+def kg_recent_posts(limit: int = 8) -> str:
+    query = """
+    MATCH (p:Post)
+    RETURN p.title AS title, p.category AS category, p.created_at AS created_at
+    ORDER BY p.created_at DESC
+    LIMIT $limit
+    """
+    try:
+        rows = run_read(query, limit=limit)
+        if not rows:
+            return ""
+        lines = []
+        for r in rows:
+            cat = r.get("category") or "n/d"
+            title = r.get("title") or "(senza titolo)"
+            lines.append(f"- [{cat}] {title}")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"(errore lettura post pubblicati: {str(e)})"
+
+
+# Elenco COMPATTO (solo titoli) delle proposte in sospeso, per il planner: cosi' sa cosa
+# c'e' gia' in backlog ed evita di riproporlo, potendo invece dargli continuita'.
+@traceable(run_type="retriever", name="kg_proposed_titles")
+def kg_proposed_titles() -> str:
+    query = """
+    MATCH (pr:Proposal)
+    RETURN pr.title AS title, pr.category AS category
+    ORDER BY pr.created_at ASC
+    """
+    try:
+        rows = run_read(query)
+        if not rows:
+            return ""
+        return "\n".join(f"- [{r.get('category') or 'n/d'}] {r.get('title') or ''}" for r in rows)
+    except Exception as e:
+        return f"(errore lettura proposte: {str(e)})"

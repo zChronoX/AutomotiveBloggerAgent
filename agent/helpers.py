@@ -32,6 +32,11 @@ _WRITE_WORDS = [
     "confronta", "confronto", "metti a confronto", "paragona",
     "recensione", "recensisci", "parla di", "parlami di", "parlami",
     "parlaci", "guida su", "guida sulla", "guida sui", "fammi un post",
+    # Verbi di pianificazione: "pianifica/preparami N post su ..." e' una richiesta
+    # di SCRITTURA (poi e' il gate editoriale a far scegliere quanti scriverne).
+    # I termini di suggerimento hanno comunque priorita' (vedi wants_post), quindi
+    # "pianificami degli argomenti" resta correttamente un suggerimento.
+    "pianifica", "pianificami", "preparami", "prepara",
 ]
 
 # Funzione che mette in pratica quello che c'è scritto su.
@@ -46,6 +51,51 @@ def wants_post(text: str) -> bool:
     if any(w in t for w in _SUGGEST_WORDS):
         return False
     return any(w in t for w in _WRITE_WORDS)
+
+
+# Mappa di numeri scritti a parole -> intero, per intercettare richieste tipo
+# "pianifica tre post". NB: di proposito NON includiamo "un/uno/una", che in italiano
+# sono articoli indeterminativi ("scrivimi un post" = un post generico, non "esattamente 1")
+# e farebbero scattare erroneamente il conteggio a 1 invece del default.
+_NUM_WORDS = {
+    "due": 2, "tre": 3, "quattro": 4, "cinque": 5,
+}
+
+
+def extract_num_posts(text: str, default: int = 3, cap: int = 5) -> int:
+    """
+    Estrae dinamicamente DALLA richiesta dell'utente quanti post pianificare.
+    Esempi intercettati: "pianifica 4 post", "scrivimi 3 articoli", "una sequenza
+    di 2", "tre post". Se non trova un numero esplicito usa il default.
+    Il risultato e' sempre limitato a [1, cap] per non far esplodere tempi/token:
+    e' il numero MASSIMO di proposte che il planner generera'; sara' poi il gate
+    editoriale a far scegliere all'utente quante effettivamente scriverne.
+    """
+    if not text:
+        return default
+    low = text.lower()
+
+    # Numeri in cifre vicino a parole come post/articoli/proposte/sequenza.
+    patterns = [
+        r"(\d+)\s+(?:post|articol|propost|pezz|contenut)",
+        r"(?:pianific\w+|prepar\w+|scriv\w+|gener\w+)\s+(\d+)",
+        r"sequenza\s+di\s+(\d+)",
+    ]
+    for pat in patterns:
+        m = re.search(pat, low)
+        if m:
+            try:
+                n = int(m.group(1))
+                return max(1, min(cap, n))
+            except ValueError:
+                pass
+
+    # Numeri scritti a parole (es. "tre post").
+    for word, val in _NUM_WORDS.items():
+        if re.search(rf"\b{word}\s+(?:post|articol|propost)", low):
+            return max(1, min(cap, val))
+
+    return default
 
 
 # Definizioni di quelli che sono i tool "grounding" cioè che danno contesto al modello.

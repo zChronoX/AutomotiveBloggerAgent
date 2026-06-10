@@ -12,6 +12,7 @@ from .nodes import (
     brief_node,
     kg_context_node,
     planner_node,
+    editorial_review_node,
     suggest_topics_node,
     research_agent_node,
     revision_research_node,
@@ -21,6 +22,7 @@ from .nodes import (
     drafting_node,
     review_node,
     update_kg_node,
+    next_post_node,
 )
 from .routing import (
     route_after_clarification, route_after_planner,
@@ -44,6 +46,9 @@ def build_graph(checkpointer="default"):
     workflow.add_node("brief_node", brief_node)
     workflow.add_node("kg_context", kg_context_node)
     workflow.add_node("planner", planner_node)
+    # Gate editoriale (HITL): dopo il planner l'utente sceglie quali post scrivere,
+    # ne modifica/scarta alcuni o ne chiede di nuovi. Si auto-instrada con Command.
+    workflow.add_node("editorial_review_node", editorial_review_node)
     workflow.add_node("suggest_topics_node", suggest_topics_node)
     workflow.add_node("research_agent", research_agent_node)
     workflow.add_node("revision_research_node", revision_research_node)
@@ -53,6 +58,9 @@ def build_graph(checkpointer="default"):
     workflow.add_node("drafting_node", drafting_node)
     workflow.add_node("review_node", review_node)
     workflow.add_node("update_kg_node", update_kg_node)
+    # Gate "prossimo post" (HITL): dopo ogni post pubblicato/scartato decide se
+    # continuare con i selezionati rimasti, con quale, o fermarsi. Si auto-instrada.
+    workflow.add_node("next_post_node", next_post_node)
 
     # Edges
     # FASE 0 - Scoping: clarification (con eventuale loop) -> brief -> KG

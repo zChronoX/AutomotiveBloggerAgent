@@ -87,27 +87,86 @@ def _graded_invoke(schema, prompt_text):
 DATASET_NAME = os.environ.get("EVAL_DATASET", "AutomotiveBloggerAgent V1.1")
 
 
-# Funzione principale di esecuzione della valutazione, si ferma all'interrupt Review.
+# Legge l'interrupt attualmente pendente dallo snapshot del grafo.
+# Gli interrupt LangGraph espongono il payload passato a interrupt(...) in
+# task.interrupts[].value: da li' ricaviamo l'"action" per decidere come riprendere.
+def _pending_interrupt_action(snapshot):
+    for task in (getattr(snapshot, "tasks", None) or ()):
+        for itr in (getattr(task, "interrupts", None) or ()):
+            val = getattr(itr, "value", None)
+            if isinstance(val, dict):
+                return val.get("action_request", {}).get("action")
+    return None
+
+
+# Funzione principale di esecuzione della valutazione, si ferma all'interrupt della bozza.
 def run_blogger_until_draft(inputs: dict) -> dict:
     """
     Funzione-target per LangSmith evaluate().
-    Esegue il grafo fino all'interrupt della review umana e restituisce la bozza,
-    SENZA riprendere (quindi senza aggiornare il Knowledge Graph).
+    Esegue il grafo fino all'interrupt della review della BOZZA e restituisce la bozza,
+    SENZA approvarla (quindi senza aggiornare il Knowledge Graph).
+
+    NB: dopo l'introduzione del planning multi-post, il PRIMO interrupt del grafo non e'
+    piu' la review della bozza ma il GATE EDITORIALE (review_editorial_plan), che scatta
+    prima della ricerca e della stesura. Per i prompt di scrittura quindi non basta un
+    singolo invoke: bisogna attraversare i gate di planning (e l'eventuale richiesta di
+    chiarimento) riprendendo il grafo, fino a raggiungere la bozza. Qui lo facciamo in
+    automatico, accettando tutte le proposte del piano ("scrivili tutti") e senza scrivere
+    post aggiuntivi. I prompt del ramo suggerimenti non passano dai gate e terminano subito.
     """
     import uuid
     from agent import graph
+    from langgraph.types import Command
 
     config = {"configurable": {"thread_id": f"eval-{uuid.uuid4()}"}}
     user_input = inputs.get("user_input", "")
 
-    # Avvio del grafo che verrà fermato all'interrupt
-    try:
-        graph.invoke({"user_input": user_input}, config)
-    except Exception as e:
-        return {"draft_content": "", "error": f"Esecuzione grafo fallita: {e}"}
+    # Numero massimo di riprese, per non rischiare loop: chiarimento + gate editoriale +
+    # margine. Arrivati alla bozza ci fermiamo, quindi in pratica ne bastano 1-2.
+    MAX_RESUMES = 6
+    snapshot = None
+    error = None
 
-    # Leggiamo lo stato corrente
-    snapshot = graph.get_state(config)
+    try:
+        # Avvio del grafo: si fermera' al primo interrupt (gate editoriale per i prompt di
+        # scrittura, chiarimento se la richiesta e' vaga) oppure terminera' (suggerimenti).
+        graph.invoke({"user_input": user_input}, config)
+
+        for _ in range(MAX_RESUMES):
+            snapshot = graph.get_state(config)
+            # Grafo terminato (nessun nodo pendente): es. ramo suggerimenti o annullamento.
+            if not (snapshot and snapshot.next):
+                break
+
+            action = _pending_interrupt_action(snapshot)
+
+            # Siamo all'interrupt della BOZZA: e' esattamente dove vogliamo fermarci.
+            if action == "review_post_draft":
+                break
+
+            # Altrimenti attraversiamo i gate di planning senza modificare il KG:
+            if action == "review_editorial_plan":
+                # accetto TUTTE le proposte del piano -> il grafo prosegue verso la stesura
+                resume = {"type": "response", "args": "scrivili tutti"}
+            elif action == "clarify_request":
+                # non blocco la valutazione su un chiarimento: procedo con la richiesta originale
+                resume = {"type": "ignore"}
+            elif action == "continue_writing":
+                # in valutazione non scrivo post successivi: mi fermo qui
+                resume = {"type": "ignore"}
+            else:
+                # interrupt non riconosciuto: mi fermo per non rischiare un loop
+                break
+
+            graph.invoke(Command(resume=resume), config)
+    except Exception as e:
+        error = f"Esecuzione grafo fallita: {e}"
+
+    # Leggiamo lo stato corrente (anche in caso di errore, per restituire cio' che c'e').
+    try:
+        snapshot = graph.get_state(config)
+    except Exception:
+        snapshot = None
     values = snapshot.values if snapshot else {}
 
     draft = values.get("draft_content") or ""
@@ -143,6 +202,7 @@ def run_blogger_until_draft(inputs: dict) -> dict:
         "interrupted": bool(snapshot.next) if snapshot else False,
         "tools_called": tools_called,
         "user_input": user_input,
+        "error": error,
     }
 
 
