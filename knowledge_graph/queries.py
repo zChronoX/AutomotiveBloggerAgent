@@ -201,6 +201,24 @@ def kg_related_topics(topic: str) -> list[str]:
 # proposte rimaste in sospeso da piani precedenti rientrano in gioco, in ordine di
 # creazione (cosi' possono essere recuperate e scritte piu' avanti).
 @traceable(run_type="retriever", name="kg_pending_proposals")
+def kg_pending_titles_list() -> list:
+    """
+    Restituisce i SOLI titoli delle proposte pendenti come lista Python ordinata
+    (dalla piu' vecchia). Serve al gate dei suggerimenti per mappare la scelta
+    dell'utente ("la proposta 2") sul titolo giusto in modo deterministico.
+    """
+    query = """
+    MATCH (pr:Proposal)
+    RETURN pr.title AS title
+    ORDER BY pr.created_at ASC
+    """
+    try:
+        rows = run_read(query)
+        return [r.get("title") or "" for r in rows if r.get("title")]
+    except Exception:
+        return []
+
+
 def kg_pending_proposals() -> str:
     """
     Restituisce le proposte editoriali pendenti, formattate, ordinate dalla piu' vecchia.

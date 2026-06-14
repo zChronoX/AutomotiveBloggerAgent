@@ -17,6 +17,7 @@ llm = ChatOllama(
     temperature=config.temperature,
     num_ctx=config.model_num_ctx,
     keep_alive=0,
+    num_gpu = 98,
 )
 
 drafting_llm = ChatOllama(
@@ -26,4 +27,5 @@ drafting_llm = ChatOllama(
     # Qui uso il massimo numero di token in scrittura per evitare che il modello inizi a scrivere loop di cose
     num_predict=config.draft_num_predict,  
     keep_alive=0,
+    num_gpu = 98,
 )

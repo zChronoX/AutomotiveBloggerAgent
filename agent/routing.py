@@ -76,13 +76,19 @@ def grade_documents(state: dict) -> Literal["research_agent", "rewrite_question_
     if not isinstance(last, ToolMessage) or not should_grade_tool(getattr(last, "name", "")):
         return "research_agent"
 
+    content = str(getattr(last, "content", ""))
+    # I messaggi di servizio (limite ricerche raggiunto, chiamata ripetuta bloccata) NON
+    # sono fonti da valutare: valutarli produceva un terzo "Fonti non rilevanti: riformulo"
+    # che spingeva il modello a ritentare ricerche ormai bloccate. Si prosegue e basta.
+    if content.startswith("Limite di") or content.startswith("Il tool '"):
+        return "research_agent"
+
     print(f"\nValuto la rilevanza delle fonti dal tool '{last.name}'.")
 
     # Soggetto PULITO per il confronto: il current_topic puo' essere un titolo lungo di
     # proposta; la chiave canonica (es. "audi rs3") rende il giudizio piu' stabile ed evita
     # di scartare fonti valide solo perche' non combaciano con tutta la frase.
     subject = canonical_topic(state.get("current_topic", "")) or (state.get("current_topic", "") or "")[:80]
-    content = str(getattr(last, "content", ""))
 
     grader = llm.with_structured_output(GradeDocuments)
     # Giudizio sull'UTILITA' sostanziale, non sulla sola presenza del tema: cosi' una pagina

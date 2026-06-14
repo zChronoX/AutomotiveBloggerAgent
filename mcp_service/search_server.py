@@ -69,7 +69,7 @@ summarizer_llm = ChatOllama(
 
 # Prompt per la sintesi di una fonte/articolo.
 SUMMARIZE_ONE_PROMPT = """Sei un assistente che riassume una pagina web per un blog automotive.
-Riassumi il contenuto in italiano in 4-6 frasi complete, mantenendo TUTTI i dati concreti
+Riassumi il contenuto in italiano in 6-8 frasi complete, mantenendo TUTTI i dati concreti
 (modelli, cilindrate, potenze, prezzi, date, luoghi, dichiarazioni). Riporta le unita' di misura
 ESATTAMENTE come nell'originale (NON convertire lb-ft, mph, libbre, ecc.). NON inventare nulla
 che non sia nel testo. Scrivi solo il riassunto, senza preamboli."""
@@ -143,6 +143,22 @@ def _pick_topic(query: str) -> str:
     q = (query or "").lower()
     return "news" if any(k in q for k in _NEWS_KEYWORDS) else "general"
 
+
+# Semplificazione deterministica della query. Il modello 3B a volte genera query
+# lunghissime e "ricche" (es. "Maserati MCPura 2024/2025 prestazioni motore V6 biturbo,
+# design futuristico, recensioni ufficiali, dati tecnici aggiornati") che peggiorano i
+# risultati di Tavily. Rete di sicurezza: taglio alla prima virgola (la parte dopo sono
+# quasi sempre criteri accessori) e tengo al massimo le prime 6 parole.
+def _simplify_query(query: str) -> str:
+    q = (query or "").strip()
+    for sep in (",", ";", " - "):
+        if sep in q:
+            q = q.split(sep, 1)[0].strip()
+    words = q.split()
+    if len(words) > 6:
+        q = " ".join(words[:6])
+    return q or (query or "").strip()
+
 # Metodo che scarta risultati non validi, come sitemap, file XML e pagine senza contenuti (solo elenco di URLs).
 # Evito che il modello che riassume, si confonda e torni un output illeggibile.
 def _is_valid_article(r: dict) -> bool:
@@ -191,6 +207,7 @@ def _relevance_filter(query: str, results: list) -> list:
 @mcp_server.tool()
 def search_and_summarize(query: str) -> str:
     try:
+        query = _simplify_query(query)
         topic = _pick_topic(query)
         result = tavily_client.search(
             query=query,

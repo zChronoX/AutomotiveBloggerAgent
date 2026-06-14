@@ -133,6 +133,25 @@ def _handle_continue(request, config):
     return graph.invoke(Command(resume=resume), config)
 
 
+# Gestisce il gate dei suggerimenti: mostra le proposte (in sospeso, calendario, RSS)
+# e chiede se l'utente vuole scrivere uno di quei temi. INVIO/no -> chiude e basta;
+# altrimenti la scelta viene interpretata dal nodo e si riparte verso la scrittura.
+def _handle_choose_suggestion(request, config):
+    print("\n" + "=" * 56)
+    print("  SUGGERIMENTI DELL'AGENTE")
+    print("=" * 56)
+    print(f"\n{request.get('description', '')}\n")
+    print("Vuoi scrivere uno di questi temi? Indica quale (es. 'la proposta 1',")
+    print("'il calendario 2', 'la notizia 3', oppure descrivi il tema).")
+    risposta = input("La tua scelta (INVIO o 'no' per chiudere): ").strip()
+    if not risposta or risposta.lower() in ("no", "no grazie", "niente", "nulla",
+                                            "lascia stare", "esci", "chiudi", "annulla"):
+        resume = {"type": "ignore"}
+    else:
+        resume = {"type": "response", "args": risposta}
+    return graph.invoke(Command(resume=resume), config)
+
+
 # Cuore della gestione HITL: finche' il grafo si ferma su un interrupt, lo smista
 # all'handler giusto in base all'azione. Gestisce catene di pause concatenate
 # (chiarimento -> gate editoriale -> revisione bozza -> prossimo post -> ...).
@@ -148,6 +167,8 @@ def _dispatch_interrupts(result, config):
             result = _handle_review_draft(request, config)
         elif action == "continue_writing":
             result = _handle_continue(request, config)
+        elif action == "choose_suggestion":
+            result = _handle_choose_suggestion(request, config)
         else:
             # Azione di interrupt sconosciuta: per sicurezza esco dal loop.
             break
@@ -199,10 +220,8 @@ def run_agent():
         elif status == "planning_cancelled":
             print("\nPianificazione annullata: nessun post scritto.")
         elif status == "topics_suggested":
-            if messages:
-                print(f"\nSuggerimenti dell'agente:\n{messages[-1].content}\n")
-            else:
-                print("\nOperazione conclusa.")
+            # I suggerimenti sono gia' stati mostrati dal gate HITL: chiudo e basta.
+            print("\nOk! Quando vuoi scrivere uno di questi temi, chiedimelo pure.")
         else:
             # Fallback generico.
             if messages:

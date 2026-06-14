@@ -153,37 +153,37 @@ Testi grezzi dal web:
 Scrivi solo il riassunto tecnico:
 """
 
-# Prompt per il tool di ricerca veicoli + confronto delle specifiche
-# questa coppia di prompt vengono usate per la comparazione dei veicoli.
-# i dati grezzi vengono estratti con Ministral. Il modello deve seguire
-# regole specifiche di formattazione dei dati, necessarie affinché il modello
-# fine tuned funzioni come è stato allenato. Infatti llama 3.2 1B è stato allenato
-# con un dataset di elementi formati da 150/200 token con una finestra massima di 2048.
-# Di conseguenza se passassi roba troppo discorsiva, il giudice fallirebbe.
+# Prompt per il tool compare_vehicles.
+# Le fonti web sono gia' state recuperate e RIASSUNTE dal server MCP (mcp_web_search,
+# che usa il suo SUMMARIZE_ONE_PROMPT): qui NON si riassume di nuovo. Questo prompt serve
+# solo a TRASFORMARE quelle fonti nel profilo a formato fisso atteso dal modello fine tuned.
+# Llama 3.2 1B e' stato allenato con elementi da 150/200 token (finestra max 2048): se gli
+# passassi testo troppo discorsivo, il giudice fallirebbe.
 
-VEHICLE_RESEARCH_PROMPT = """Sei un analista dati del settore automotive.
-Dai dati grezzi qui sotto, scrivi un profilo tecnico BREVE e FATTUALE del veicolo richiesto.
+SPEC_PROFILE_PROMPT = """Sei un analista dati del settore automotive.
+Dai riassunti delle fonti qui sotto, scrivi il profilo tecnico del veicolo {veicolo}
+nel FORMATO FISSO richiesto.
 
-VEICOLO RICHIESTO: {query_base}
+FORMATO FISSO (un solo paragrafo, campi in QUEST'ORDINE, ometti i campi senza dato):
+"Motore <tipo/cilindrata/cilindri> da <CV> CV e <Nm> Nm. 0-100 in <s> s.
+Consumo <valore con unita'>. Prezzo da <EUR>. <N> stelle Euro NCAP, <ADAS principali>.
+<Cambio/trazione e 1-2 voci di dotazione chiave>."
+
+Esempio del risultato atteso:
+"Motore 2.0 4 cilindri turbo da 421 CV e 500 Nm. 0-100 in 3.9 s. Consumo medio dichiarato
+8.3 l/100km. Prezzo da 63.000 EUR. 5 stelle Euro NCAP, frenata automatica di serie.
+Cambio doppia frizione 8 rapporti, trazione integrale, sedili sportivi."
 
 REGOLE RIGIDE:
-1. UN SOLO PARAGRAFO discorsivo, MASSIMO 60-80 parole. NON usare titoli, sezioni, elenchi
-   puntati, simboli Markdown (#, *, -) o sotto-paragrafi: solo testo discorsivo continuo.
-2. Includi solo i dati chiave essenziali: motore e potenza (CV), consumi, prezzo, sicurezza
-   (stelle Euro NCAP), dotazione principale. Tralascia tutto il resto.
-3. Estrai solo numeri e fatti presenti nel testo grezzo. Se un dato manca, ometterlo
-   (NON scrivere "non disponibile", NON inventare).
-4. Niente aggettivi enfatici, niente note, niente criticita' o sezioni aggiuntive.
+1. UN SOLO paragrafo discorsivo, MASSIMO 80 parole. Niente titoli, elenchi o Markdown.
+2. SOLO numeri e fatti presenti nei riassunti. Se un dato manca, OMETTILO
+   (NON scrivere "non disponibile", NON inventare, NON usare la memoria).
+3. Niente aggettivi enfatici, niente note o sezioni aggiuntive.
 
-Esempio del livello di sintesi richiesto:
-"Motore 1.0 3 cilindri mild-hybrid da 70 CV. Consumo medio dichiarato 4.6 l/100km. Prezzo da
-17.500 EUR. 4 stelle Euro NCAP, frenata automatica assente nella base. Infotainment 7 pollici
-con Apple CarPlay e clima manuale."
+RIASSUNTI DELLE FONTI:
+{fonti_elaborate}
 
-TESTO GREZZO RECUPERATO:
-{testo_grezzo}
-
-Scrivi il profilo tecnico breve (un paragrafo, max 60-80 parole):"""
+Profilo tecnico (un paragrafo, max 80 parole):"""
 
 # Prompt del modellino da 1B con fine tuning. Ritorna una struttura precisa (senza tabelle e cose strane).
 # La comparazione è articolata in 4 punti + un verdetto finale.

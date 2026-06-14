@@ -212,6 +212,12 @@ class State(MessagesState):
     # Viene azzerato quando una modifica HITL avvia un nuovo giro di ricerca mirata.
     web_search_count: Optional[int]
 
+    # Firme (nome tool + argomenti) delle chiamate gia' eseguite nel giro corrente.
+    # Serve a bloccare le chiamate RIPETUTE identiche: se un tool non ha trovato nulla
+    # con certi argomenti, richiamarlo uguale non dara' un risultato diverso (visto nei
+    # test: fetch_vehicle_specs invocato 3 volte con la stessa query fallita).
+    done_tool_calls: Optional[List[str]]
+
     # Drafting + Human-in-the-loop
     draft_content: Optional[str]
     human_feedback: Optional[str]

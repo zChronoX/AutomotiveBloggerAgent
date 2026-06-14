@@ -46,6 +46,7 @@ la approva, viene salvata nel KG, collegata al topic e vengono generate le immag
 """
 
 import re
+import json
 import time
 from typing import Literal
 
@@ -77,6 +78,7 @@ from tools.base import get_all_tools, get_react_tools
 # Funzioni pure del KG chiamate in modo deterministico nelle fasi obbligatorie
 from knowledge_graph.queries import (
     kg_topics_overview, kg_topic_context, kg_related_topics, kg_pending_proposals,
+    kg_pending_titles_list,
     kg_recent_posts, kg_proposed_titles,
 )
 from knowledge_graph.updater import update_kg_data, add_proposals, remove_proposal
@@ -184,15 +186,17 @@ def clarification_node(state: dict):
             "user_input": enriched,
             "clarification_count": clarif_count + 1,
             "status": "clarifying",
-            "reasoning_trace": trace(state, f"\nChiarimento richiesto e ricevuto: {extra[:120]}"),
+            "reasoning_trace": trace(state, f"\nChiarimento richiesto e ricevuto: {extra[:300]}"),
         }
 
-    # Richiesta chiara: registriamo la verifica e proseguiamo
-    print(f"\nRichiesta chiara: {decision_verification[:100]}")
+    # Richiesta chiara: registriamo la verifica e proseguiamo.
+    # In console NON stampiamo la "motivazione" del modello: il 3B spesso non motiva ma
+    # RISPONDE alla richiesta (es. propone temi), confondendo l'utente. Resta nel trace.
+    print("\nRichiesta chiara: procedo con la pianificazione.")
     return {
         "user_input": user_input,
         "status": "scoped",
-        "reasoning_trace": trace(state, f"\nRichiesta chiara: {decision_verification[:120]}"),
+        "reasoning_trace": trace(state, f"\nRichiesta chiara: {decision_verification[:300]}"),
     }
 
 # Trasforma la richiesta (eventualmente chiarita) in un brief editoriale strutturato.
@@ -291,22 +295,11 @@ def planner_node(state: dict):
     except Exception as e:
         planned, reasoning = [], f"(Pianificazione strutturata non riuscita: {e})."
 
-    current_topic = planned[0]["topic"] if planned else (user_input or "Argomento automotive")
-    print(f"\n{len(planned)} post pianificati (max richiesti: {max_posts}). Tema principale: {current_topic}")
-    return {
-        "planning_info": planned,
-        "current_topic": current_topic,
-        "num_posts_requested": max_posts,
-        "status": "planned",
-        "reasoning_trace": trace(state, "\nPiano editoriale generato."),
-    }
-    try:
-        plan = planner_llm.invoke([SystemMessage(content=prompt)])
-        # Convertiamo subito in dizionari
-        planned = [p.model_dump() for p in plan.planned_posts]
-        reasoning = plan.reasoning
-    except Exception as e:
-        planned, reasoning = [], f"(Pianificazione strutturata non riuscita: {e})."
+    # Clamp deterministico al numero richiesto: il modello 3B a volte ignora la regola
+    # "ESATTAMENTE N" e genera comunque 3 proposte (visto con "scrivi 1 post" -> 3).
+    # Tagliamo qui per garantire il conteggio richiesto, senza dipendere dall'LLM.
+    if max_posts and len(planned) > max_posts:
+        planned = planned[:max_posts]
 
     current_topic = planned[0]["topic"] if planned else (user_input or "Argomento automotive")
     print(f"\n{len(planned)} post pianificati (max richiesti: {max_posts}). Tema principale: {current_topic}")
@@ -368,6 +361,7 @@ def _reset_for_new_post(state: dict, next_post: dict) -> dict:
         "local_sources": [],
         "draft_content": "",
         "web_search_count": 0,
+        "done_tool_calls": [],
         "forced_web_search": False,
         "revision_count": 0,
         "human_feedback": None,
@@ -443,6 +437,12 @@ def _parse_editorial_decision(user_response: str, plan: list) -> EditorialDecisi
         elif any(v in cl for v in _ED_WRITE):
             targets = nums
             if not targets and re.search(r"tutt[ie]", cl):
+                targets = list(range(1, n_plan + 1))
+            # Se c'e' un verbo di scrittura senza numero e senza "tutti", ma c'e' UNA
+            # sola proposta, l'utente intende chiaramente quella (es. "scrivilo", "procedi
+            # pure", "puoi scriverlo"). Vale anche se le proposte sono poche: "scrivi" senza
+            # numeri su un piano da 1-2 proposte = scrivi tutte quelle rimaste.
+            if not targets and n_plan <= 2:
                 targets = list(range(1, n_plan + 1))
             for x in targets:
                 if x not in seen:
@@ -640,7 +640,62 @@ def editorial_review_node(state: dict) -> Command[Literal["editorial_review_node
 
 # Metodo usato quando l'utente vuole un suggerimento. Sfrutto il planner node per
 # arricchire i suggerimenti di post da scrivere, insieme alle news del tool RSS.
-def suggest_topics_node(state: dict):
+# Parser deterministico della scelta al gate dei suggerimenti. L'utente puo' indicare:
+# - "proposta 2" / "sospesa 1" -> proposte pendenti dal KG;
+# - "calendario 1" / "piano 2" -> proposte del nuovo calendario;
+# - "notizia 3" / "rss 3"      -> notizie del feed;
+# - un numero nudo             -> in ordine di priorita' (pendenti > calendario > rss);
+# - testo libero               -> match per sottostringa sui titoli, altrimenti tema libero.
+# Restituisce il tema scelto (stringa) o None se vuoto/incomprensibile.
+def _parse_suggestion_choice(text: str, pending: list, plan_topics: list, rss_titles: list):
+    t = (text or "").strip()
+    if not t:
+        return None
+    low = t.lower()
+
+    def _pick(lst, n):
+        return lst[n - 1] if 1 <= n <= len(lst) else None
+
+    # 1) Riferimento esplicito a una lista + numero.
+    m = re.search(r"(?:propost\w*|sospes\w*|recuperabil\w*)\D{0,12}(\d+)", low)
+    if m:
+        return _pick(pending, int(m.group(1)))
+    m = re.search(r"(?:calendario|piano|nuov\w*)\D{0,12}(\d+)", low)
+    if m:
+        return _pick(plan_topics, int(m.group(1)))
+    m = re.search(r"(?:notizi\w*|rss|feed|trend\w*)\D{0,12}(\d+)", low)
+    if m:
+        return _pick(rss_titles, int(m.group(1)))
+
+    # 2) Numero nudo: stessa priorita' con cui le liste vengono mostrate.
+    m = re.search(r"\b(\d+)\b", low)
+    if m:
+        n = int(m.group(1))
+        return _pick(pending, n) or _pick(plan_topics, n) or _pick(rss_titles, n)
+
+    # 3) Match per sottostringa sui titoli (es. "quello sulla Porsche").
+    #    Cerco le parole significative della risposta dentro i titoli.
+    words = [w for w in re.findall(r"[a-zA-Zàèéìòù0-9]{4,}", low)
+             if w not in ("quello", "quella", "sulla", "sullo", "sulle", "sugli",
+                          "post", "articolo", "scrivi", "scrivere", "vorrei", "facciamo")]
+    if words:
+        for lst in (pending, plan_topics, rss_titles):
+            for title in lst:
+                tl = (title or "").lower()
+                if any(w in tl for w in words):
+                    return title
+
+    # 4) Testo libero con un minimo di sostanza: lo uso come tema nuovo.
+    if len(t) >= 8:
+        return t
+    return None
+
+
+# Presenta i suggerimenti (proposte in sospeso > calendario > RSS) e POI chiede
+# all'utente se vuole scrivere uno dei temi proposti (gate HITL "choose_suggestion").
+# Se sceglie un tema, il flusso riparte dal brief con la nuova richiesta di scrittura;
+# se rifiuta (INVIO/no), si chiude come prima lasciando i suggerimenti come risposta.
+def suggest_topics_node(state: dict) -> Command[Literal["suggest_topics_node", "brief_node", "__end__"]]:
     plan = state.get("planning_info") or []
     trends = state.get("trends_summary", "")
 
@@ -649,22 +704,26 @@ def suggest_topics_node(state: dict):
     parts = []
 
     # 1) Proposte in sospeso (proposed) -> priorita' massima.
-    pending = kg_pending_proposals()
-    if pending:
-        parts.append(pending)
+    pending_text = kg_pending_proposals()
+    pending_titles = kg_pending_titles_list()
+    if pending_text:
+        parts.append(pending_text)
 
     # 2) Nuovo calendario editoriale proposto dal planner.
+    plan_topics = [p.get("topic", "") for p in plan]
     if plan:
         out = ["Proposta di calendario editoriale:\n"]
         for i, p in enumerate(plan, 1):
             out.append(f"{i}. [{p['post_category']}] {p['topic']}\n   Motivazione: {p['justification']}")
         parts.append("\n".join(out))
-    elif not pending:
+    elif not pending_text:
         # Niente di pianificato e nessuna proposta in sospeso: chiedo di precisare.
         parts.append("Non sono riuscito a pianificare. Specifica meglio l'area tematica.")
 
     # 3) Feed RSS come alternativa, solo come ripiego rispetto ai punti sopra.
+    rss_titles = []
     if trends:
+        rss_titles = [m.group(1).strip() for m in re.finditer(r"^\s*\d+\.\s*(.+)$", trends, re.M)]
         parts.append(
             "Se i post in sospeso e quelli del calendario editoriale non dovessero "
             "piacerti, possiamo partire da una di queste notizie fresche dal feed RSS:\n"
@@ -673,11 +732,44 @@ def suggest_topics_node(state: dict):
 
     text = "\n\n".join(parts) if parts else "Non ho proposte da mostrare al momento."
 
-    return {
-        "messages": [AIMessage(content=text)],
-        "status": "topics_suggested",
-        "reasoning_trace": trace(state, "Presentati i topic suggeriti (proposte in sospeso prioritarie)."),
+    # Gate HITL: chiedo se vuole scrivere uno dei temi proposti.
+    request = {
+        "action_request": {"action": "choose_suggestion", "args": {}},
+        "config": {
+            "allow_accept": False, "allow_respond": True,
+            "allow_ignore": True, "allow_edit": False,
+        },
+        "description": text,
     }
+    answer = interrupt(request)
+    rtype = answer.get("type") if isinstance(answer, dict) else None
+
+    if rtype != "response":
+        # L'utente non vuole scrivere ora: chiudo lasciando i suggerimenti come risposta.
+        return Command(goto=END, update={
+            "messages": [AIMessage(content=text)],
+            "status": "topics_suggested",
+            "reasoning_trace": trace(state, "Presentati i topic suggeriti; l'utente non ha scelto nulla da scrivere."),
+        })
+
+    scelta = (answer.get("args", "") if isinstance(answer.get("args"), str)
+              else str(answer.get("args", "")))
+    tema = _parse_suggestion_choice(scelta, pending_titles, plan_topics, rss_titles)
+
+    if not tema:
+        print("\nNon ho capito quale tema vuoi: ripropongo i suggerimenti. "
+              "(Indica ad esempio 'la proposta 1', 'la notizia 3', oppure descrivi il tema.)")
+        return Command(goto="suggest_topics_node")
+
+    # Tema scelto: costruisco la nuova richiesta di scrittura e riparto dal brief,
+    # riusando l'intero flusso (brief -> KG -> planner -> gate editoriale -> ...).
+    new_input = f"Scrivi un post su: {tema}"
+    print(f"\nOttimo: preparo il piano per '{tema}'.")
+    return Command(goto="brief_node", update={
+        "user_input": new_input,
+        "status": "scoped",
+        "reasoning_trace": trace(state, f"L'utente ha scelto dai suggerimenti: {tema}."),
+    })
 
 
 # Fase 3: ReAct + Self-RAG
@@ -896,7 +988,12 @@ def drafting_node(state: dict):
                     and "nessun" not in content.lower()[:30]):
                 # La ricerca web ora restituisce un output strutturato per-fonte (titolo +
                 # URL + riassunto): le diamo piu' spazio per non tagliare gli URL da citare.
-                limit = 2000 if getattr(m, "name", "") == "mcp_web_search" else 900
+                # compare_vehicles ha un verdetto lungo (~1400 char con 4 categorie):
+                # anche quello va dato intero per non troncare le ultime categorie.
+                if getattr(m, "name", "") in ("mcp_web_search", "compare_vehicles", "compare_vehicles_tool"):
+                    limit = 2000
+                else:
+                    limit = 900
                 sources.append(f"[{m.name}] {content[:limit]}")
 
     # Aggiungiamo i documenti locali recuperati deterministicamente nel K-RAG
@@ -1221,6 +1318,12 @@ def resilient_tool_node(state: dict):
             if isinstance(m, ToolMessage) and getattr(m, "name", "") == "mcp_web_search"
         )
 
+    # Registro delle chiamate gia' eseguite (nome tool + argomenti normalizzati):
+    # se il modello richiama un tool con gli STESSI argomenti, blocco la ripetizione.
+    # Se non ha funzionato la prima volta, non funzionera' nemmeno la seconda
+    # (visto nei test: fetch_vehicle_specs chiamato 3 volte con la stessa query fallita).
+    done_calls = list(state.get("done_tool_calls") or [])
+
     for call in tool_calls:
         name = call.get("name")
         call_id = call.get("id")
@@ -1284,6 +1387,26 @@ def resilient_tool_node(state: dict):
             outputs.append(ToolMessage(content=content, name=name, tool_call_id=call_id))
             continue
 
+        # Blocco delle chiamate RIPETUTE: stessa coppia (tool, argomenti) gia' eseguita
+        # in questo giro. Ripetere una chiamata identica non puo' dare un esito diverso:
+        # rispondo subito istruendo il modello a usare quanto gia' raccolto o a cambiare
+        # strategia, senza consumare tempo (fetch_vehicle_specs impiega anche 30s).
+        try:
+            signature = f"{name}|{json.dumps(args, sort_keys=True, ensure_ascii=False)}"
+        except Exception:
+            signature = f"{name}|{str(sorted(args.items()))}"
+        if signature in done_calls:
+            content = (
+                f"Il tool '{name}' e' GIA' stato chiamato con questi stessi argomenti e "
+                "l'esito lo hai gia' ricevuto. NON ripetere la stessa chiamata: usa le "
+                "informazioni gia' raccolte, oppure cambia tool o argomenti, oppure procedi "
+                "alla stesura con cio' che hai."
+            )
+            print(f"\nChiamata ripetuta a '{name}' con gli stessi argomenti: bloccata.")
+            outputs.append(ToolMessage(content=content, name=name, tool_call_id=call_id))
+            continue
+        done_calls.append(signature)
+
         if tool is None:
             content = (
                 f"ERRORE: il tool '{name}' non esiste. "
@@ -1307,7 +1430,7 @@ def resilient_tool_node(state: dict):
         if name in _GROUNDING_TOOL_NAMES and content.strip() and "errore" not in content.lower()[:40]:
             raw_notes_collected.append(f"[{name}] {content}")
 
-    new_state = {"messages": outputs, "web_search_count": web_done}
+    new_state = {"messages": outputs, "web_search_count": web_done, "done_tool_calls": done_calls}
     if raw_notes_collected:
         existing = state.get("raw_notes") or []
         new_state["raw_notes"] = existing + raw_notes_collected

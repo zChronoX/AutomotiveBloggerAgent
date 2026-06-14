@@ -21,7 +21,7 @@ if _hf_token:
 @dataclass(kw_only=True)
 class Configuration:
     """
-    Configurazioni per l'agente Blogger Copilot.
+    Configurazioni per l'agente AutomotiveBloggerAgent.
     I valori possono essere sovrascritti da variabili d'ambiente o da un RunnableConfig.
     """
 
@@ -40,7 +40,7 @@ class Configuration:
 
     # Contesto del modello principale molto ampio (ai limiti della VRAM) per permettere al modello
     # di avere un buon ragioamento ReAct con tanti step e tool da utilizzare
-    model_num_ctx: int = 22528
+    model_num_ctx: int = 16384
 
     # Contesto per la stesura più contenuto, non serve andare ai limiti della VRAM per la stesura.
     draft_num_ctx: int = 16384
@@ -57,7 +57,7 @@ class Configuration:
     # "bassa" per evitare di inserire falsi positiv.
     # top_k indica invece il numero massimo di chunk da reperire.
     rag_distance_threshold: float = float(os.environ.get("RAG_DISTANCE_THRESHOLD", "1.10"))
-    rag_fallback_max: float = float(os.environ.get("RAG_FALLBACK_MAX", "1.20"))
+    rag_fallback_max: float = float(os.environ.get("RAG_FALLBACK_MAX", "1.17"))
     rag_top_k: int = int(os.environ.get("RAG_TOP_K", "5"))
 
     # Modello utilizzato per riassumere i risultati delle ricerche tramite Tavily

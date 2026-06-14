@@ -80,7 +80,16 @@ Produci:
 - notes: 1-2 aspetti concreti da coprire, coerenti col tema richiesto e con il pubblico del blog.
 
 Nel dubbio, resta MINIMALE e aderente: meglio un brief essenziale e corretto che uno ricco ma
-infedele alla richiesta."""
+infedele alla richiesta.
+
+ATTENZIONE, ERRORI DA EVITARE:
+- NON restringere il focus aggiungendo espressioni come "focalizzandosi esclusivamente su X",
+  "solo gli aspetti visivi", "limitandosi a Y", SE l'utente non ha chiesto quel filtro.
+  Una richiesta generica ("recensione della Aprilia Tuono 457") resta generica: il brief
+  deve coprire TUTTI gli aspetti normali di una recensione, non inventare un angolo ristretto.
+- NON aggiungere esempi di modelli specifici tra parentesi (es. "come l'Audi A6 RS, l'A4 RS"):
+  se l'utente dice "un modello gia' trattato", lascia la formulazione aperta — sara' il planner
+  a scegliere in base al KG, non il brief a indovinare."""
 
 
 
@@ -163,7 +172,10 @@ recensione, una guida pratica, un confronto, le novita'), NON analisi di variant
 diverse. Soprattutto, NON inventare modelli o versioni che non esistono o che l'utente non ha
 nominato: resta sul soggetto reale indicato.
 
-Genera una sequenza ORDINATA di MASSIMO {max_posts} post (dal piu' prioritario), ciascuno con topic,
+Genera una sequenza ORDINATA di ESATTAMENTE {max_posts} post (dal piu' prioritario), ciascuno con topic,
+category, reasoning e justification. NON generare meno di {max_posts} proposte: il primo post
+risponde alla richiesta dell'utente; gli altri completano il piano con angolazioni diverse,
+continuita' rispetto ai post pubblicati, gap del KG o approfondimenti correlati.
 categoria (events/how_to/review/news) e giustificazione editoriale. Assicura DIVERSITA'
 e COPERTURA del dominio ed evita argomenti gia' trattati di recente. Nel campo 'reasoning'
 spiega passo-passo perche' questo ordine e questa selezione."""
@@ -287,10 +299,18 @@ Contesto dal Knowledge Graph (coerenza con i contenuti esistenti, cross-link):
 Documenti locali GIA' RECUPERATI per te dalla memoria del blog (RAG):
 {local_docs}
 
-Procedi in stile ReAct (Thought -> Action -> Observation): giustifica ogni scelta,
-verifica le fonti e conserva i riferimenti per poterli citare.
-IMPORTANTE: prima di OGNI chiamata a un tool scrivi UNA breve frase (il tuo Thought) che
-spiega PERCHE' quel tool serve adesso per questo tema. Mai chiamare un tool senza motivarlo.
+Procedi in stile ReAct (Thought -> Action -> Observation). FORMATO OBBLIGATORIO prima di
+OGNI chiamata a un tool, su due righe separate:
+Thought: <una frase: PERCHE' questo tool serve adesso per questo tema>
+Action: <nome_tool>(<argomenti chiave>)
+Le Observation sono i risultati dei tool che ricevi dopo ogni chiamata: leggile e basa il
+Thought successivo su di esse. Mai chiamare un tool senza il Thought e l'Action scritti.
+
+REGOLE SUI TOOL (TASSATIVE):
+- Query web BREVI: massimo 4-5 parole (es. "Maserati MCPura scheda tecnica"), NIENTE frasi
+  lunghe con virgole o elenchi di criteri: peggiorano i risultati.
+- NON ripetere MAI una chiamata gia' fatta con gli stessi argomenti: se non ha funzionato
+  la prima volta, non funzionera' neanche la seconda. Cambia argomenti, tool o procedi.
 
 REGOLA FONDAMENTALE: NON scrivere il post basandoti solo sulla tua conoscenza interna.
 - I documenti locali qui sopra (se presenti) sono gia' la tua base di conoscenza tecnica:

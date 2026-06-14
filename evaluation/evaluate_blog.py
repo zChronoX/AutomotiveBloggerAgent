@@ -154,6 +154,10 @@ def run_blogger_until_draft(inputs: dict) -> dict:
             elif action == "continue_writing":
                 # in valutazione non scrivo post successivi: mi fermo qui
                 resume = {"type": "ignore"}
+            elif action == "choose_suggestion":
+                # gate dei suggerimenti: in valutazione non scelgo nulla da scrivere,
+                # cosi' la run termina con il testo dei suggerimenti come output.
+                resume = {"type": "ignore"}
             else:
                 # interrupt non riconosciuto: mi fermo per non rischiare un loop
                 break

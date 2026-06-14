@@ -70,7 +70,9 @@ def build_graph(checkpointer="default"):
 
     workflow.add_edge("kg_context", "planner")
     workflow.add_conditional_edges("planner", route_after_planner)
-    workflow.add_edge("suggest_topics_node", END)
+    # suggest_topics_node NON ha piu' un edge statico verso END: e' un gate HITL che
+    # si auto-instrada con Command (END se l'utente non sceglie nulla, brief_node se
+    # sceglie un tema da scrivere, se' stesso se la scelta non e' comprensibile).
 
     workflow.add_conditional_edges("research_agent", route_after_research)
     workflow.add_conditional_edges("revision_research_node", route_after_research)
