@@ -186,7 +186,7 @@ def clarification_node(state: dict):
             "user_input": enriched,
             "clarification_count": clarif_count + 1,
             "status": "clarifying",
-            "reasoning_trace": trace(state, f"\nChiarimento richiesto e ricevuto: {extra[:300]}"),
+            "reasoning_trace": trace(state, f"\nChiarimento richiesto e ricevuto: {extra[:120]}"),
         }
 
     # Richiesta chiara: registriamo la verifica e proseguiamo.
@@ -196,7 +196,7 @@ def clarification_node(state: dict):
     return {
         "user_input": user_input,
         "status": "scoped",
-        "reasoning_trace": trace(state, f"\nRichiesta chiara: {decision_verification[:300]}"),
+        "reasoning_trace": trace(state, f"\nRichiesta chiara: {decision_verification[:120]}"),
     }
 
 # Trasforma la richiesta (eventualmente chiarita) in un brief editoriale strutturato.
@@ -1422,7 +1422,13 @@ def resilient_tool_node(state: dict):
                 content = f"Errore durante l'esecuzione del tool '{name}': {e}. Riprova o usa un altro tool."
                 print(f"\nEccezione nel tool '{name}': {e}")
 
-        msg = ToolMessage(content=content, name=name or "unknown", tool_call_id=call_id)
+        # Anteponiamo l'etichetta "Observation (<tool>):" al risultato: cosi' l'osservazione
+        # e' parte ESPLICITA del flusso di messaggi (la vede il modello al passo successivo
+        # ed e' visibile in LangSmith come messaggio tool), chiudendo il ciclo ReAct in modo
+        # leggibile. NB: i messaggi di servizio (limite/blocco) sono creati altrove e NON
+        # passano di qui, quindi i controlli startswith del grader restano validi.
+        msg = ToolMessage(content=f"Observation ({name or 'tool'}): {content}",
+                          name=name or "unknown", tool_call_id=call_id)
         outputs.append(msg)
 
         # Se il tool è una fonte (grounding) allora salvo l'output grezzo del tool

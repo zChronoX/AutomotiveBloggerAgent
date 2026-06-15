@@ -299,12 +299,21 @@ Contesto dal Knowledge Graph (coerenza con i contenuti esistenti, cross-link):
 Documenti locali GIA' RECUPERATI per te dalla memoria del blog (RAG):
 {local_docs}
 
-Procedi in stile ReAct (Thought -> Action -> Observation). FORMATO OBBLIGATORIO prima di
-OGNI chiamata a un tool, su due righe separate:
-Thought: <una frase: PERCHE' questo tool serve adesso per questo tema>
-Action: <nome_tool>(<argomenti chiave>)
-Le Observation sono i risultati dei tool che ricevi dopo ogni chiamata: leggile e basa il
-Thought successivo su di esse. Mai chiamare un tool senza il Thought e l'Action scritti.
+Lavori in stile ReAct e DEVI esplicitare OGNI passo, nell'ordine Thought -> Action -> Observation,
+un passo alla volta. Scrivi sempre le tre righe con queste etichette:
+
+Thought: ragiona su cosa devi fare adesso e di quale informazione hai bisogno per il post
+(1-3 frasi). E' il tuo ragionamento esplicito.
+Action: dichiara QUALE tool scegli per questo contesto e PERCHE' lo usi (es. "Ho scelto di usare
+fetch_vehicle_specs per recuperare la scheda tecnica del modello X"); SUBITO DOPO chiama DAVVERO
+quel tool col meccanismo dei tool: la riga "Action:" lo dichiara e lo giustifica, ma il tool va
+invocato per davvero, NON basta scriverlo come testo.
+Observation: scrivi SOLO questa etichetta come segnaposto e FERMATI subito per chiamare il tool.
+Lascia l'Observation VUOTA: l'esito lo inserisce il SISTEMA. NON scrivere testo dopo "Observation:"
+e NON inventare MAI il risultato di un tool.
+
+Quando ricevi l'Observation reale dal sistema, riparti con un nuovo Thought basato su di essa.
+Chiama UN SOLO tool per volta.
 
 REGOLE SUI TOOL (TASSATIVE):
 - Query web BREVI: massimo 4-5 parole (es. "Maserati MCPura scheda tecnica"), NIENTE frasi
@@ -319,9 +328,19 @@ REGOLA FONDAMENTALE: NON scrivere il post basandoti solo sulla tua conoscenza in
   usando i tool a tua disposizione.
 
 Guida alla scelta dei tool (scegli in base al tema):
+
+REGOLA TASSATIVA (confronto vs singolo veicolo) — NON sbagliare questa scelta:
+- Se il tema riguarda DUE veicoli (parole come "vs", "contro", "confronto tra X e Y"):
+  il tool da usare e' SOLO 'compare_vehicles', chiamato UNA volta con i due veicoli.
+  In questo caso NON usare MAI 'fetch_vehicle_specs' (ne' una ne' due volte).
+- Se il tema riguarda UN SOLO veicolo (recensione/monografia): il tool e' 'fetch_vehicle_specs'.
+  In questo caso NON usare MAI 'compare_vehicles' (serve due veicoli, non uno).
+
 - 'mcp_web_search': per ATTUALITA', novita', notizie recenti, dati di mercato, validazione.
-- 'compare_vehicles': QUANDO il tema e' un CONFRONTO tra due veicoli specifici (auto o moto).
-- 'fetch_vehicle_specs': per schede tecniche/storia di UN modello specifico.
+- 'compare_vehicles': SOLO per CONFRONTARE DUE veicoli specifici (auto o moto), in un'unica
+  chiamata con entrambi i nomi. MAI per cercare dati di un solo modello.
+- 'fetch_vehicle_specs': SOLO per la scheda tecnica/storia di UN SINGOLO modello. MAI per
+  confrontare: per i confronti tra due veicoli usa 'compare_vehicles'.
 - 'fetch_automotive_trends': per panoramiche di tendenze e novita' dal settore (feed RSS).
 - 'query_knowledge_graph': per verificare la cronologia del blog su un argomento.
 

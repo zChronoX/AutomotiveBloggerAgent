@@ -67,7 +67,7 @@ def deep_research_vehicle(vehicle: VehicleSpec) -> str:
     1) UNA ricerca con lo STESSO tool dell'agente (mcp_web_search): va in HTTP al server
        MCP, che esegue ricerca + riassunto per fonte NEL SUO processo e restituisce il
        testo gia' pulito (formato "FONTE 1/2/3").
-    2) Dal risultato tengo TUTTE LE FONTI restituite dal server.
+    2) Dal risultato tengo solo le PRIME 3 FONTI.
     3) UNA chiamata al modello per trasformare quel formato nel profilo a campi fissi
        atteso dal fine-tuned.
     """
@@ -95,8 +95,12 @@ def deep_research_vehicle(vehicle: VehicleSpec) -> str:
     if not testo_ricerca.strip() or testo_ricerca.lower().startswith("nessun"):
         return f"Dati web non disponibili per {nome_veicolo}."
 
-    # 2) Tengo TUTTE LE FONTI restituite dal server.
-    
+    # 2) Tengo solo le PRIME 3 FONTI restituite dal server (formato "FONTE 1: ... FONTE 2: ...").
+    # Il server cerca su 5 fonti; per non rallentare ancora di piu' il giudizio ne uso 3.
+    quarta = testo_ricerca.find("FONTE 4:")
+    if quarta != -1:
+        testo_ricerca = testo_ricerca[:quarta].rstrip()
+
     # 3) UNA chiamata al modello: trasforma il formato della ricerca nel profilo fisso.
     researcher = ChatOllama(model=RESEARCHER_MODEL, temperature=0.0, keep_alive="2m")
     prompt_profile = SPEC_PROFILE_PROMPT.format(veicolo=nome_veicolo, fonti_elaborate=testo_ricerca)
@@ -125,8 +129,11 @@ def _split_nome(nome: str) -> tuple:
 @tool("compare_vehicles", args_schema=CompareVehiclesInput)
 def compare_vehicles_tool(veicolo_1: str, veicolo_2: str, tipo: str = "") -> str:
     """
-    Usa questo tool SOLO per confrontare due auto o moto. Passa il NOME COMPLETO di
-    ciascun veicolo (es. veicolo_1='Volkswagen Golf GTI', veicolo_2='Toyota GR Yaris').
+    Usa questo tool SOLO per CONFRONTARE DUE veicoli (auto o moto), in un'unica chiamata
+    con il NOME COMPLETO di entrambi (es. veicolo_1='Volkswagen Golf GTI',
+    veicolo_2='Toyota GR Yaris').
+    REGOLA TASSATIVA: serve SEMPRE due veicoli. NON usarlo MAI per cercare i dati di un
+    solo modello: in quel caso usa 'fetch_vehicle_specs'.
     """
     m1, mod1 = _split_nome(veicolo_1)
     m2, mod2 = _split_nome(veicolo_2)

@@ -364,7 +364,7 @@ def evaluate_tool_usage(run, example) -> dict:
 # come errori, step medi del grafo e latenza.
 #CAMBIARE IL NOME DEL PROGETTO
 def observability_report(project_name: str = None, limit: int = 50) -> dict:
-    project = project_name or os.environ.get("LANGSMITH_PROJECT", "blogger-copilot")
+    project = project_name or os.environ.get("LANGSMITH_PROJECT", "AutomotiveBloggerAgent")
     try:
         # L'API di LangSmith accetta al massimo 100 run per richiesta, sennò da errore.
         fetch_limit = min(limit * 20, 100)

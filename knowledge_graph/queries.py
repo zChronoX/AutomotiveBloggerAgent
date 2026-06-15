@@ -149,12 +149,15 @@ def kg_topic_context(topic: str) -> str:
             return f"Nessun contesto nel KG per '{topic}': e' un argomento nuovo."
 
         r = rows[0]
-        posts = [x for x in r["posts"] if x]
-        claims = [x for x in r["claims"] if x]
-        sources = [x for x in r["sources"] if x]
-        related = [x for x in r["related"] if x]
+        # Limito gli elementi per non gonfiare il kickoff: bastano pochi titoli e claim
+        # per la coerenza e i cross-link. Le "fonti gia' usate" NON vengono piu' iniettate:
+        # erano il blocco piu' pesante e meno utile (un post nuovo raccoglie le proprie
+        # fonti) e nel grafo contengono spesso output grezzi dei tool, non URL puliti.
+        posts = [x for x in r["posts"] if x][:3]
+        claims = [x for x in r["claims"] if x][:3]
+        related = [x for x in r["related"] if x][:5]
 
-        if not any([posts, claims, sources, related]):
+        if not any([posts, claims, related]):
             return f"Nessun contesto nel KG per '{topic}': e' un argomento nuovo."
 
         lines = [f"Contesto del KG per il topic '{topic}' (usalo per coerenza e link interni):"]
@@ -162,8 +165,6 @@ def kg_topic_context(topic: str) -> str:
             lines.append("Post esistenti collegati: " + "; ".join(posts))
         if claims:
             lines.append("Claim gia' affermati (non contraddirli): " + "; ".join(claims))
-        if sources:
-            lines.append("Fonti gia' usate: " + "; ".join(sources))
         if related:
             lines.append("Topic correlati per cross-link: " + ", ".join(related))
         return "\n".join(lines)

@@ -134,8 +134,8 @@ Azione: Restituisce una lista di titoli recenti dal feed RSS. Usali per proporre
 VEHICLE_SPECS_PROMPT = """
 Scopo: Recupera la scheda tecnica e il contesto enciclopedico di UN SINGOLO veicolo, combinando due fonti: API Ninja (dati tecnici strutturati: cilindrata, potenza, consumi, ecc.) e Wikipedia Italia (storia, background, descrizione del modello).
 Input: car_model (stringa) — il nome completo del veicolo richiesto dall'utente. Passa SEMPRE il veicolo di cui si sta parlando nella conversazione, non un esempio.
-Quando usarlo: USA QUESTO TOOL quando devi recuperare dati tecnici, cilindrate, anni di produzione, scheda tecnica o aneddoti storici di UN modello specifico. Serve per articoli monografici (recensioni) o per integrare dati tecnici nella stesura.
-ATTENZIONE: per CONFRONTARE due veicoli NON usare questo tool due volte — usa 'compare_vehicles' che fa il confronto completo in un'unica chiamata.
+Quando usarlo: USA QUESTO TOOL SOLO per UN SINGOLO veicolo (articoli monografici/recensioni o per integrare i dati tecnici di un modello nella stesura).
+REGOLA TASSATIVA: questo tool vale per UN SOLO veicolo. Se il tema e' un CONFRONTO tra DUE veicoli, NON usare MAI questo tool (ne' una ne' due volte): usa ESCLUSIVAMENTE 'compare_vehicles', che esegue il confronto completo in un'unica chiamata.
 Azione: Restituisce un riassunto strutturato che unisce le specifiche tecniche (da API Ninja, quando disponibili) e la storia del modello (da Wikipedia).
 """
 

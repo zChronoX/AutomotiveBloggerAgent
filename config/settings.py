@@ -40,10 +40,10 @@ class Configuration:
 
     # Contesto del modello principale molto ampio (ai limiti della VRAM) per permettere al modello
     # di avere un buon ragioamento ReAct con tanti step e tool da utilizzare
-    model_num_ctx: int = 16384
+    model_num_ctx: int = 22528
 
     # Contesto per la stesura più contenuto, non serve andare ai limiti della VRAM per la stesura.
-    draft_num_ctx: int = 16384
+    draft_num_ctx: int = 22528
 
     # Indice di sicurezza per il numero di token durante la stesura.
     # il modello potrebbe entrare in un loop ripetitivo e generare
@@ -73,7 +73,7 @@ class Configuration:
     # le variabili necessarie per il tracing. Non attiva il tracing vero.
     
     langsmith_tracing: str = os.environ.get("LANGSMITH_TRACING", "false")
-    langsmith_project: Optional[str] = os.environ.get("LANGSMITH_PROJECT", "blogger-copilot")
+    langsmith_project: Optional[str] = os.environ.get("LANGSMITH_PROJECT", "AutomotiveBloggerAgent")
 
     # Valore booleano per attivare le diagnostiche (come tool call, RAG, ecc)
     # Per default e' disattivato, cosi' l'output e' pulito.
