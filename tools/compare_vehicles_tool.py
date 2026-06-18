@@ -18,13 +18,13 @@ RESEARCHER_MODEL = "ministral-3:3b"             # Per la sintesi e normalizzazio
 JUDGE_MODEL = "llama3.2:1b_fine_tuned"          # Giudice per la comparazione dei modelli
 
 
-# --- Prompt usati da questo tool ---
-# Definiti in prompts/tool_prompts.py (coerenza con gli altri prompt del progetto)
+# Prompt usati da questo tool
+# Definiti in prompts/tool_prompts.py
 # e importati in cima a questo modulo:
 #  - SPEC_PROFILE_PROMPT: trasforma le fonti restituite da mcp_web_search nel profilo a
-#    FORMATO FISSO su cui e' stato addestrato il modello fine-tuned (paragrafo di soli fatti).
+#    FORMATO FISSO su cui è stato addestrato il modello fine-tuned (paragrafo di soli fatti).
 #  - TINY_JUDGE_SYSTEM_PROMPT: prompt di sistema del giudice fine-tuned (formato del verdetto).
-# La sintesi delle singole fonti NON avviene qui: la fa il server MCP (mcp_web_search).
+# La sintesi delle singole fonti non avviene qui: la fa il server MCP (mcp_web_search).
 
 
 # Uso uno schema piatto invece che un JSON per evitare
@@ -34,10 +34,7 @@ from typing import Optional
 
 
 class CompareVehiclesInput(BaseModel):
-    # Schema SEMPLICE (2 sole stringhe obbligatorie). Lo schema precedente aveva 5 campi
-    # obbligatori separati (tipo, marca/modello x2) e il modello 3B ne perdeva sempre
-    # qualcuno -> ValidationError e tool fallito (es. passava solo il primo veicolo).
-    # Con due nomi completi il modello riempie l'input in modo affidabile.
+    # Schema semplice con 2 sole stringhe obbligatorie
     veicolo_1: str = Field(description="Nome completo del primo veicolo, es. 'Volkswagen Golf GTI'")
     veicolo_2: str = Field(description="Nome completo del secondo veicolo, es. 'Toyota GR Yaris'")
     tipo: Optional[str] = Field(default="", description="'Auto' o 'Moto'. Opzionale.")
@@ -53,8 +50,8 @@ class VehicleSpec:
 
 
 # Cache a livello di modulo per evitare che il 3B richiami compare_vehicles 3 volte
-# nello stesso loop ReAct (succede: il modello non si ricorda di averlo gia' fatto).
-# La chiave e' la coppia (marca1_modello1, marca2_modello2) normalizzata.
+# nello stesso loop ReAct.
+# La chiave è la coppia (marca1_modello1, marca2_modello2) normalizzata.
 _compare_cache: dict[str, str] = {}
 
 
@@ -63,22 +60,22 @@ _compare_cache: dict[str, str] = {}
 # la riceca va fatta solo su siti precisi.
 def deep_research_vehicle(vehicle: VehicleSpec) -> str:
     """Profilo tecnico del veicolo nel formato del modello fine-tuned.
-    Pipeline (per OGNI veicolo, quindi 2 ricerche in totale per confronto):
-    1) UNA ricerca con lo STESSO tool dell'agente (mcp_web_search): va in HTTP al server
-       MCP, che esegue ricerca + riassunto per fonte NEL SUO processo e restituisce il
-       testo gia' pulito (formato "FONTE 1/2/3").
-    2) Dal risultato tengo solo le PRIME 3 FONTI.
-    3) UNA chiamata al modello per trasformare quel formato nel profilo a campi fissi
+    Pipeline (per ogni veicolo, quindi 2 ricerche in totale per confronto):
+    1) Una ricerca con lo stesso tool dell'agente (mcp_web_search): va in HTTP al server
+       MCP, che esegue ricerca + riassunto per fonte nel suo processo e restituisce il
+       testo già pulito (formato "FONTE 1/2/3").
+    2) Dal risultato tengo solo le prime 3 fonti.
+    3) Una chiamata al modello per trasformare quel formato nel profilo a campi fissi
        atteso dal fine-tuned.
     """
-    # Query SEMPLICE e deterministica: marca + modello (+ anno se c'e').
-    # Le query lunghe e "ricche" peggiorano i risultati di Tavily: bastano i termini chiave.
+    # Query semplice con marca + modello (+ anno se c'è).
+    # Le query lunghe e ricche peggiorano i risultati di Tavily: bastano i termini chiave.
     nome_veicolo = f"{vehicle.marca} {vehicle.modello} {vehicle.anno}".strip()
     query = f"{vehicle.marca} {vehicle.modello} {vehicle.anno} scheda tecnica".strip()
 
-    # 1) Ricerca via lo STESSO tool dell'agente: mcp_web_search. Va in HTTP al server MCP
-    # (porta 8765), quindi la ricerca e i riassunti per-fonte girano NEL processo del
-    # server (non qui in main.py) e al compare torna SOLO il testo gia' pulito, nello
+    # 1) Ricerca via lo stesso tool dell'agente: mcp_web_search. Va in HTTP al server MCP
+    # (porta 8765), quindi la ricerca e i riassunti per-fonte girano nel processo del
+    # server (non qui in main.py) e al compare torna SOLO il testo già pulito, nello
     # stesso formato "FONTE 1/2/3" della ricerca normale. Import lazy per non eseguire
     # il modulo del client al caricamento dei tool.
     try:
@@ -89,26 +86,21 @@ def deep_research_vehicle(vehicle: VehicleSpec) -> str:
         except Exception:
             testo_ricerca = mcp_web_search.func(query) or ""
     except Exception as e:
-        print(f"[Avviso] Ricerca web (MCP) non disponibile per {nome_veicolo}: {e}")
+        print(f"Ricerca web (MCP) non disponibile per {nome_veicolo}: {e}")
         testo_ricerca = ""
 
     if not testo_ricerca.strip() or testo_ricerca.lower().startswith("nessun"):
         return f"Dati web non disponibili per {nome_veicolo}."
 
-    # 2) Tengo solo le PRIME 3 FONTI restituite dal server (formato "FONTE 1: ... FONTE 2: ...").
-    # Il server cerca su 5 fonti; per non rallentare ancora di piu' il giudizio ne uso 3.
-    quarta = testo_ricerca.find("FONTE 4:")
-    if quarta != -1:
-        testo_ricerca = testo_ricerca[:quarta].rstrip()
 
-    # 3) UNA chiamata al modello: trasforma il formato della ricerca nel profilo fisso.
+    #Trasforma il formato della ricerca nel profilo fisso tramite il 3b
     researcher = ChatOllama(model=RESEARCHER_MODEL, temperature=0.0, keep_alive="2m")
     prompt_profile = SPEC_PROFILE_PROMPT.format(veicolo=nome_veicolo, fonti_elaborate=testo_ricerca)
     summary = researcher.invoke([HumanMessage(content=prompt_profile)])
     profile = (summary.content or "").strip()
 
     # Il modellino fine tuned è stato addestrato con profili lunghi 150-200 token (max 2048).
-    # Per sicurezza tronco il profilo a 900 caratteri. Sennò genererà un'output instabile.
+    # Per sicurezza tronco il profilo a 900 caratteri.
     MAX_PROFILE_CHARS = 900
     if len(profile) > MAX_PROFILE_CHARS:
         profile = profile[:MAX_PROFILE_CHARS].rsplit(" ", 1)[0] + "..."
@@ -152,8 +144,7 @@ def compare_vehicles_tool(veicolo_1: str, veicolo_2: str, tipo: str = "") -> str
     dati_v1 = deep_research_vehicle(v1)
     dati_v2 = deep_research_vehicle(v2)
 
-    # Giudice fine-tuned: chiamata IDENTICA all'originale (nessun num_predict, che cappava
-    # l'output e tagliava il verdetto). keep_alive=0: scarica il modello dopo l'uso.
+    # Chiamo il modello fine tuned per il confronto 
     judge = ChatOllama(model=JUDGE_MODEL, temperature=0.1, keep_alive=0)
     system_prompt = SystemMessage(content=TINY_JUDGE_SYSTEM_PROMPT)
     user_prompt = HumanMessage(content=(
@@ -168,9 +159,9 @@ def compare_vehicles_tool(veicolo_1: str, veicolo_2: str, tipo: str = "") -> str
     verdetto = judge.invoke([system_prompt, user_prompt])
     result = (verdetto.content or "").strip()
 
-    # Il modellino 1B a volte si ferma dopo le 4 categorie e OMETTE il "Verdetto Finale".
-    # Se manca, lo chiedo con UNA chiamata mirata e lo appendo: cosi' il verdetto c'e'
-    # sempre, senza inventare nulla (si basa sulla comparazione appena prodotta).
+    # Il modellino 1B a volte si ferma dopo le 4 categorie e omette il "Verdetto Finale".
+    # Se manca, lo chiedo con una chiamata mirata e lo appendo: cosi' il verdetto c'è sempre,
+    # senza inventare nulla (si basa sulla comparazione appena prodotta).
     if "verdetto" not in result.lower():
         try:
             chiusura = judge.invoke([

@@ -182,8 +182,7 @@ def kg_related_topics(topic: str) -> list[str]:
     """
     Restituisce SOLO la lista dei topic correlati a un dato topic nel KG.
     Usata per la QUERY EXPANSION del K-RAG: le entita'/topic correlati del KG
-    vengono accodati alla query di retrieval per espanderla (requisito:
-    "use the Knowledge Graph to expand or refine retrieval queries").
+    vengono accodati alla query di retrieval per espanderla.
     """
     query = """
     MATCH (t:Topic {name: $topic})-[:RELATED_TO]-(rt:Topic)
@@ -204,7 +203,7 @@ def kg_related_topics(topic: str) -> list[str]:
 @traceable(run_type="retriever", name="kg_pending_proposals")
 def kg_pending_titles_list() -> list:
     """
-    Restituisce i SOLI titoli delle proposte pendenti come lista Python ordinata
+    Restituisce i soli titoli delle proposte pendenti come lista Python ordinata
     (dalla piu' vecchia). Serve al gate dei suggerimenti per mappare la scelta
     dell'utente ("la proposta 2") sul titolo giusto in modo deterministico.
     """
@@ -246,9 +245,9 @@ def kg_pending_proposals() -> str:
         return f"Errore durante la lettura delle proposte: {str(e)}"
 
 
-# Elenco COMPATTO dei post gia' pubblicati di recente (titoli reali + categoria), usato
-# dal planner per la CONTINUITA': quando l'utente chiede un confronto/seguito con qualcosa
-# "gia' trattato", il planner deve riferirsi a un modello REALE preso da qui, non inventarne
+# Elenco compatto dei post già pubblicati di recente (titoli reali + categoria), usato
+# dal planner per la continuità': quando l'utente chiede un confronto/seguito con qualcosa
+# "già trattato", il planner deve riferirsi a un modello reale preso da qui, non inventarne
 # uno. Restituisce stringa vuota se non c'e' nulla.
 @traceable(run_type="retriever", name="kg_recent_posts")
 def kg_recent_posts(limit: int = 8) -> str:
@@ -272,8 +271,8 @@ def kg_recent_posts(limit: int = 8) -> str:
         return f"(errore lettura post pubblicati: {str(e)})"
 
 
-# Elenco COMPATTO (solo titoli) delle proposte in sospeso, per il planner: cosi' sa cosa
-# c'e' gia' in backlog ed evita di riproporlo, potendo invece dargli continuita'.
+# Elenco compatto (solo titoli) delle proposte in sospeso, per il planner: così sa cosa
+# c'è già in backlog ed evita di riproporlo, potendo invece dargli continuità'.
 @traceable(run_type="retriever", name="kg_proposed_titles")
 def kg_proposed_titles() -> str:
     query = """

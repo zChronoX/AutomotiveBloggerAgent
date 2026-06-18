@@ -9,7 +9,9 @@ from langchain_core.messages import ToolMessage
 
 
 # Funzione che accoda una riga di log al campo "reasoning_trace", semplicemente
-# aiuta a capire nel main in che fase siamo e cosa è stato fatto.
+# aiuta a capire nel main in che fase siamo e cosa è stato fatto. Prende
+# lo stato attuale del grafo e lo aggiunge alla variabile "reasoning_trace"
+# così capisco tutti i passaggi che l'agente compie.
 def trace(state: dict, line: str) -> str:
     """Aggiunge una riga al reasoning trace nello stato."""
     prev = state.get("reasoning_trace") or ""
@@ -20,11 +22,20 @@ def trace(state: dict, line: str) -> str:
 # I termini di suggerimento hanno priorità rispetto la stesura del post stesso, quindi se scrivo
 # "Suggeriscimi argomenti per un post" in automatico il "suggeriscimi" nasconde il termine "post"
 
+
+# Questo è un dizionario di parole per i suggerimenti, quindi quando l'utente
+# non vuole scrivere subito un post o dei post, ma vuole solo un suggerimento
 _SUGGEST_WORDS = [
     "suggerisci", "suggeriscimi", "proponi", "idee", "argomenti",
     "spunti", "di cosa", "consigli", "consigliami", "brainstorm",
 ]
 
+#Questo invece è un dizionario di parole per far sì che l'agente capisca che l'utente vuole 
+#scrivere un post. Ad esempio se scrivo "scrivi un post su X" lui capirà che deve scrivere un post.
+#Abbiamo messo alla fine dei verbi di pianificazione perché servono durante
+#la fase editoriale, in cui chiediamo all'agente di pianificare dei post.
+#la proprità comunque è nei suggerimenti, quindi prima si entra in suggest_word
+#e poi in write words.
 _WRITE_WORDS = [
     "scrivi", "bozza", "articolo", "redigi", "redarre", "stesura",
     "prepara un post", "scrivimi", "componi", "genera un post",
@@ -32,20 +43,15 @@ _WRITE_WORDS = [
     "confronta", "confronto", "metti a confronto", "paragona",
     "recensione", "recensisci", "parla di", "parlami di", "parlami",
     "parlaci", "guida su", "guida sulla", "guida sui", "fammi un post",
-    # Verbi di pianificazione: "pianifica/preparami N post su ..." e' una richiesta
-    # di SCRITTURA (poi e' il gate editoriale a far scegliere quanti scriverne).
-    # I termini di suggerimento hanno comunque priorita' (vedi wants_post), quindi
-    # "pianificami degli argomenti" resta correttamente un suggerimento.
     "pianifica", "pianificami", "preparami", "prepara",
 ]
 
-# Funzione che mette in pratica quello che c'è scritto su.
+# Funzione che mette in pratica quello che c'è scritto su, controlla
+# se l'utente ha chiesto un suggerimento o un post, in base alle parole
+# presenti del dizionario.
 def wants_post(text: str) -> bool:
     """
-    True se l'utente vuole SCRIVERE un post; False se vuole solo SUGGERIMENTI.
-
-    I termini di suggerimento hanno PRIORITA': frasi come "suggeriscimi argomenti per i
-    prossimi post" contengono 'post' ma NON sono richieste di scrittura.
+    True se l'utente vuole scrivere un post; False se vuole solo suggerimenti.
     """
     t = (text or "").lower()
     if any(w in t for w in _SUGGEST_WORDS):
@@ -53,10 +59,8 @@ def wants_post(text: str) -> bool:
     return any(w in t for w in _WRITE_WORDS)
 
 
-# Mappa di numeri scritti a parole -> intero, per intercettare richieste tipo
-# "pianifica tre post". NB: di proposito NON includiamo "un/uno/una", che in italiano
-# sono articoli indeterminativi ("scrivimi un post" = un post generico, non "esattamente 1")
-# e farebbero scattare erroneamente il conteggio a 1 invece del default.
+#Altro dizionario in cui mappo numeri scritti in lettere al loro valore numerico.
+#Viene usata per estrarre quanti post l'utente vuole che l'agente pianifichi.
 _NUM_WORDS = {
     "due": 2, "tre": 3, "quattro": 4, "cinque": 5,
 }
@@ -64,11 +68,11 @@ _NUM_WORDS = {
 
 def extract_num_posts(text: str, default: int = 3, cap: int = 5) -> int:
     """
-    Estrae dinamicamente DALLA richiesta dell'utente quanti post pianificare.
-    Esempi intercettati: "pianifica 4 post", "scrivimi 3 articoli", "una sequenza
+    Estrae dinamicamente dalla richiesta dell'utente quanti post pianificare.
+    Ad esempio: "pianifica 4 post", "scrivimi 3 articoli", "una sequenza
     di 2", "tre post". Se non trova un numero esplicito usa il default.
-    Il risultato e' sempre limitato a [1, cap] per non far esplodere tempi/token:
-    e' il numero MASSIMO di proposte che il planner generera'; sara' poi il gate
+    Il risultato è sempre limitato da 1 a 5 per non far esplodere tempi/token:
+    è il numero massimo di proposte che il planner generera', sarà poi il gate
     editoriale a far scegliere all'utente quante effettivamente scriverne.
     """
     if not text:
@@ -109,12 +113,13 @@ _GROUNDING_TOOLS = {
 }
 
 
+#Utlity che controlla se il modello ha raccolto fonti durante il processo di ricerca.
 def has_collected_sources(state: dict) -> bool:
     """
-    True se nella cronologia c'e' almeno UNA fonte valida raccolta dai tool di
+    True se nella cronologia c'e' almeno una fonte valida raccolta dai tool di
     ricerca/grounding (un ToolMessage non vuoto e senza errore). Serve al guardrail
     "verifica fonti": un post non deve essere scritto basandosi solo sulla conoscenza
-    interna del modello.
+    interna del modello che potrebbe allucinare tranquillamente.
     """
     for m in state.get("messages", []):
         if isinstance(m, ToolMessage) and getattr(m, "name", "") in _GROUNDING_TOOLS:
@@ -129,7 +134,7 @@ def has_collected_sources(state: dict) -> bool:
 # Metodo che pulisce l'intera catena del ReACT dalla stesura, evitando che venga incluso nel risultato finale del post.
 def strip_reasoning_preamble(text: str) -> str:
     """
-    Rimuove un eventuale preambolo di ragionamento (Thought:/Action:/Observation)
+    Rimuove un eventuale fase di ragionamento ReAct (Thought:/Action:/Observation)
     che alcuni modelli antepongono all'articolo. Agisce solo se rileva i
     marcatori di ragionamento e se c'e' un titolo Markdown dopo; altrimenti restituisce il testo
     invariato.
@@ -176,10 +181,9 @@ def normalize_tool_args(name: str, args: dict) -> dict:
             if alias in args and isinstance(args[alias], str) and args[alias].strip():
                 fixed = dict(args)
                 fixed[target] = fixed.pop(alias)
-                print(f"[Tool] Argomento '{alias}' rimappato su '{target}' per '{name}'.")
+                print(f"Argomento '{alias}' rimappato su '{target}' per '{name}'.")
                 return fixed
         return args
-
     if name in query_tools:
         return _remap("query")
     if name in topic_tools:
@@ -197,11 +201,11 @@ _MODIFICATION_NEEDS_RESEARCH = {
     "metti a confronto", "compara",
 }
 
-
+#Metodo che implementa quanto detto sopra. Determina se la modifica richiede una ricerca di nuovi dati o meno.
 def modification_needs_research(feedback: str) -> bool:
     """
-    True se la richiesta di modifica dell'utente sembra richiedere NUOVI DATI
-    (e quindi un altro giro di ricerca), False se e' una modifica solo testuale
+    True se la richiesta di modifica dell'utente sembra richiedere nuovi dati
+    (e quindi un altro giro di ricerca), False se è una modifica solo testuale
     (accorcia, cambia tono, riscrivi l'introduzione, ecc.).
     """
     if not feedback:
@@ -231,13 +235,11 @@ _VAGUE_ALWAYS = (
 
 def is_clearly_vague(user_input: str) -> bool:
     """
-    True se la richiesta è palesemente generica. Rete di sicurezza deterministica
+    True se la richiesta è palesemente generica. Serve
     per lo scoping: questi casi devono sempre far scattare il chiarimento, senza
     dipendere dal modello 3B.
-
-    Logica: un pattern "standalone" (es. "scrivi un post") rende la richiesta vaga
-    solo se non c'è sostanza dopo (cioè nessun tema specificato). "Scrivi un post
-    sulla Giulia Quadrifoglio" non è vago perché dopo il pattern c'è un tema.
+    Se scrivo "Scrivi un post" deve risultare ovviamente vago, mentre se scrivo
+    "Scrivi un post sulla nuova Ferrari" è ovvio che non lo sia." 
     """
 
     #Se non do input è totalmente vago 
@@ -277,6 +279,7 @@ def is_clearly_vague(user_input: str) -> bool:
 # Rimuoviamo articoli, preposizioni, parole editoriali e di taglio, in modo che
 # un titolo del genere : "La Giulia Quadrifoglio: storia, simbolo e eredita' dinastica" e
 # "Scrivi un post sulla Alfa Romeo Giulia Quadrifoglio" convergano su una chiave simile.
+# Il modellino infatti tende sempre ad arricchire il titolo dei post.
 _TOPIC_STOPWORDS = {
     "il", "lo", "la", "i", "gli", "le", "un", "uno", "una", "di", "del", "dello",
     "della", "dei", "degli", "delle", "a", "ad", "da", "in", "con", "su", "sul",
@@ -291,6 +294,8 @@ _TOPIC_STOPWORDS = {
 }
 
 
+# Metodo che normalizza il topic del post in modo da renderlo confrontabile con gli altri topic presenti nel KG.
+# Viene usato dall'updater.py per decidere se creare un nuovo topic o aggiornarne uno esistente.
 def canonical_topic(raw: str) -> str:
     """
     Genero una chiave normalizzata per il Knowledge Graph, in modo che i soggetti uguali

@@ -111,7 +111,7 @@ def _fetch_wikipedia(model_name: str) -> str:
             return ""
 
         page = None
-        # Cerco tra i primi 7 risultati (prima erano 5) in modo da aumentare le chance di trovare
+        # Cerco tra i primi 7 risultati in modo da aumentare le chance di trovare
         # una pagina utile anche quando il match esatto non esiste.
         for title in search_results[:7]:
             for auto_suggest in (False, True):
@@ -142,7 +142,7 @@ def _fetch_wikipedia(model_name: str) -> str:
         if not short_summary.endswith("."):
             short_summary += "."
 
-        # Segnalo che la pagina trovata non e' una corrispondenza esatta.
+        # Segnalo che la pagina trovata non è una corrispondenza esatta.
         note = ""
         if model_name.lower() not in page.title.lower():
             note = " (risultato piu' pertinente trovato, non corrispondenza esatta)"

@@ -97,14 +97,14 @@ Quando usarlo: Quando l'articolo è pronto o quando l'utente chiede esplicitamen
 # Prompt per l'analisi SEO (Search Engine Optimization) 
 # viene invocato all'approvazione del post, valuta
 # la qualità di lettura del post, difficoltà grammaticale, 
-# leggibilità del testo in italiano, per un blog tecnico automotive, 40-60 e' il range adeguato).
+# leggibilità del testo in italiano, per un blog tecnico automotive, 40-60 è il range adeguato).
 
 SEO_ANALYSIS_PROMPT = """
 Scopo: Calcola due metriche SEO sulla bozza dell'articolo, in modo deterministico (formula matematica, nessuna opinione):
   1. DENSITA' KEYWORD: quante volte la parola chiave principale compare nel testo (ideale: 0.5%-2.5%).
-  2. LEGGIBILITA' (indice Gulpease): quanto e' leggibile il testo in italiano (per un blog tecnico automotive, 40-60 e' il range adeguato).
+  2. LEGGIBILITA' (indice Gulpease): quanto è leggibile il testo in italiano (per un blog tecnico automotive, 40-60 è il range adeguato).
 Input: il testo completo della bozza + la keyword (parola chiave) su cui posizionare l'articolo.
-Quando usarlo: SOLO dopo che la bozza e' stata scritta; misura oggettivamente la qualita' SEO del post appena generato.
+Quando usarlo: SOLO dopo che la bozza è stata scritta; misura oggettivamente la qualità SEO del post appena generato.
 """
 
 
@@ -117,11 +117,11 @@ Quando usarlo: SOLO dopo che la bozza e' stata scritta; misura oggettivamente la
 
 TREND_ANALYSIS_PROMPT = """
 Scopo: Recupera i titoli e le anteprime delle ULTIME NOTIZIE automotive dai feed RSS di testate specializzate (Motor1, Autoblog ecc.).
-Input: query (stringa) — l'argomento o il segmento su cui cercare tendenze (es. 'auto elettriche', 'SUV', 'moto naked').
+Input: query (stringa), l'argomento o il segmento su cui cercare tendenze (es. 'auto elettriche', 'SUV', 'moto naked').
 Quando usarlo: USA QUESTO TOOL in due situazioni precise:
   1. Quando l'utente chiede idee o argomenti per nuovi post ('di cosa potremmo parlare?', 'suggeriscimi un tema caldo').
-  2. Quando stai scrivendo un articolo su TENDENZE O NOVITA' di mercato e vuoi notizie fresche dalle testate.
-NON usarlo se il tema e' tecnico/enciclopedico (freni, batterie, ADAS): per quelli usa retrieve_local_documents o fetch_vehicle_specs.
+  2. Quando stai scrivendo un articolo su TENDENZE O NOVITÀ di mercato e vuoi notizie fresche dalle testate.
+NON usarlo se il tema è tecnico/enciclopedico (freni, batterie, ADAS): per quelli usa retrieve_local_documents o fetch_vehicle_specs.
 Azione: Restituisce una lista di titoli recenti dal feed RSS. Usali per proporre idee basate sulle notizie del momento.
 """
 
@@ -133,7 +133,7 @@ Azione: Restituisce una lista di titoli recenti dal feed RSS. Usali per proporre
 
 VEHICLE_SPECS_PROMPT = """
 Scopo: Recupera la scheda tecnica e il contesto enciclopedico di UN SINGOLO veicolo, combinando due fonti: API Ninja (dati tecnici strutturati: cilindrata, potenza, consumi, ecc.) e Wikipedia Italia (storia, background, descrizione del modello).
-Input: car_model (stringa) — il nome completo del veicolo richiesto dall'utente. Passa SEMPRE il veicolo di cui si sta parlando nella conversazione, non un esempio.
+Input: car_model (stringa), il nome completo del veicolo richiesto dall'utente. Passa SEMPRE il veicolo di cui si sta parlando nella conversazione, non un esempio.
 Quando usarlo: USA QUESTO TOOL SOLO per UN SINGOLO veicolo (articoli monografici/recensioni o per integrare i dati tecnici di un modello nella stesura).
 REGOLA TASSATIVA: questo tool vale per UN SOLO veicolo. Se il tema e' un CONFRONTO tra DUE veicoli, NON usare MAI questo tool (ne' una ne' due volte): usa ESCLUSIVAMENTE 'compare_vehicles', che esegue il confronto completo in un'unica chiamata.
 Azione: Restituisce un riassunto strutturato che unisce le specifiche tecniche (da API Ninja, quando disponibili) e la storia del modello (da Wikipedia).
@@ -144,7 +144,7 @@ Azione: Restituisce un riassunto strutturato che unisce le specifiche tecniche (
 MCP_SUMMARIZER_PROMPT = """
 Sei un analista esperto di automobili e motori. Leggi i seguenti estratti di articoli 
 web grezzi e scrivi un riassunto tecnico e dettagliato. 
-Ignora le pubblicita' e le frasi inutili. Concentrati esclusivamente su: prezzi, 
+Ignora le pubblicità e le frasi inutili. Concentrati esclusivamente su: prezzi, 
 specifiche dei motori, cavalli, design, tecnologia e date di uscita.
 
 Testi grezzi dal web:

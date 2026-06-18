@@ -114,18 +114,17 @@ def update_kg_data(
             driver.close()
 
 
-# ============================================================
-# PROPOSTE EDITORIALI (:Proposal) - backlog del piano editoriale
+
+# Proposte editoriali
 # Quando l'utente sceglie quali post scrivere, l'intera selezione viene salvata
-# SUBITO come nodi :Proposal (crash-safe): se l'agente si interrompe a meta', i post
+# subito come nodi :Proposal (crash-safe): se l'agente si interrompe a metà, i post
 # non ancora scritti non vanno persi. Ogni post pubblicato con successo viene poi
 # rimosso dalle proposte (vedi remove_proposal, chiamata in update_kg_node).
 #
-# Scelta di design: la :Proposal tiene il topic come PROPRIETA' (topic_key) e NON crea
-# nodi Topic ne' relazioni. Cosi' la gap-analysis (che conta i :Post via COVERS_TOPIC)
+# La :Proposal tiene il topic come proprietà (topic_key) e non crea
+# nodi Topic né relazioni. Cosi' la gap-analysis (che conta i :Post via COVERS_TOPIC)
 # non viene inquinata da proposte non ancora scritte. Il campo 'title' resta leggibile
 # per la presentazione; 'topic_key' e' la chiave canonica per il match/dedup/rimozione.
-# ============================================================
 def add_proposals(proposals: List[dict]) -> str:
     """
     Salva (o aggiorna) una lista di proposte editoriali come nodi :Proposal.

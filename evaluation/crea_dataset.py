@@ -10,7 +10,7 @@ client = Client()
 # Successivamente, usando evaluate_blog.py, si userà questo dataset per la valutazione.
 
 
-dataset_name = "AutomotiveBloggerAgent V1.1"
+dataset_name = "AutomotiveBloggerAgent Dataset 1"
 dataset_description = "Dataset breve per la valutazione di AutomotiveBloggerAgent"
 
 # Prompt per vari scenari del progetto (post, news, recensione, KG, eventi)

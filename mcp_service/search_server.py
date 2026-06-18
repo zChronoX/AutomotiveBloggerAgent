@@ -144,10 +144,10 @@ def _pick_topic(query: str) -> str:
     return "news" if any(k in q for k in _NEWS_KEYWORDS) else "general"
 
 
-# Semplificazione deterministica della query. Il modello 3B a volte genera query
+# Semplificazione della query. Il modello 3B a volte genera query
 # lunghissime e "ricche" (es. "Maserati MCPura 2024/2025 prestazioni motore V6 biturbo,
 # design futuristico, recensioni ufficiali, dati tecnici aggiornati") che peggiorano i
-# risultati di Tavily. Rete di sicurezza: taglio alla prima virgola (la parte dopo sono
+# risultati di Tavily. Taglio alla prima virgola (la parte dopo sono
 # quasi sempre criteri accessori) e tengo al massimo le prime 6 parole.
 def _simplify_query(query: str) -> str:
     q = (query or "").strip()
@@ -188,7 +188,7 @@ def _relevance_filter(query: str, results: list) -> list:
             "design", "review", "comparison", "confronto", "ultime", "novità", "novita",
             "performance", "reliability", "specifiche", "scheda", "tecnica", "tecnico",
             "innovazione", "tecnologica", "sportività", "sportivita", "praticità", "praticita",
-            "2024", "2025", "2026", "2027", "con", "and", "the", "una", "uno", "della", "delle"}
+            "2024", "2025", "2026", "2027"}
     keywords = [w.lower() for w in re.findall(r"\w+", query) if len(w) > 3 and w.lower() not in stop]
     if not keywords:
         return results

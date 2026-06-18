@@ -1,6 +1,6 @@
 """
-Conditional edges e logica di routing del grafo.
-Estratte da blogger_agent.py per separare la logica decisionale dai nodi.
+Logica di routing del grafo, cioè decido in quale nodo far andare
+l'agente a seconda dello stato in cui si trova.
 """
 
 from typing import Literal
@@ -13,13 +13,12 @@ from utils import GradeDocuments, should_grade_tool
 # Limite massimo di chiamate per i tool durante l'intero ciclo, serve per evitare che
 # il modello chiami un numero di tool infinito e impieghi troppo tempo.
 # 10 è un numero accettabile, in quanto considera il caso "peggiore"
-# che sarebbe "fetch_vehicle_specs" chiamato due volte per ogni auto da confrontare,
-# più il "compare" ed eventualmente una ricerca web aggiuntiva.
+# ovvero quando l'agente chiama tutti i tool a disposizione, più eventuali 2 ricerche web.
 MAX_RESEARCH_STEPS = 10
 
 
 
-
+#Semplicemente indirizzo l'agente al brief se la richiesta è chiara, sennò resto nel nodo clarification.
 def route_after_clarification(state: dict) -> Literal["clarification_node", "brief_node"]:
     """
     Controllo il campo "status", se la riposta è chiara (oppure siamo arrivati al limite dei 2 chiarimenti)
@@ -35,12 +34,15 @@ def route_after_clarification(state: dict) -> Literal["clarification_node", "bri
 
 # Qui serve per modificare la rotta del grafo nel caso in cui l'utente vuole solo
 # suggerimenti e quindi glieli diamo ma non scriviamo post. Altrimenti se vuole
-# un post andiamo avanti: NON piu' direttamente alla ricerca, ma al GATE EDITORIALE
+# un post andiamo avanti: non più direttamente alla ricerca, ma al nodo editoriale
 # (editorial_review_node), dove l'utente sceglie quali post pianificati scrivere,
-# ne modifica alcuni o ne chiede di nuovi. E' il gate a instradare poi la ricerca.
+# ne modifica alcuni o ne chiede di nuovi.
 def route_after_planner(state: dict) -> Literal["editorial_review_node", "suggest_topics_node"]:
-    """L'utente vuole dei POST scritti (-> gate editoriale), o solo SUGGERIMENTI?"""
+    """L'utente vuole dei post scritti, va al nodo editoriale, altrimenti va a suggest_topics_node."""
     return "editorial_review_node" if wants_post(state.get("user_input", "")) else "suggest_topics_node"
+
+
+
 
 # Qui gestisco il ciclo ReACT in modo più complesso con una serie di guardrail per le fonti.
 # Come già evidenziato più volte, il modello locale non sempre segue i passaggi del ReACT
@@ -77,7 +79,8 @@ def grade_documents(state: dict) -> Literal["research_agent", "rewrite_question_
         return "research_agent"
 
     content = str(getattr(last, "content", ""))
-    # I messaggi di servizio (limite ricerche raggiunto, chiamata ripetuta bloccata) NON
+
+    # I messaggi di servizio (limite ricerche raggiunto, chiamata ripetuta bloccata) non
     # sono fonti da valutare: valutarli produceva un terzo "Fonti non rilevanti: riformulo"
     # che spingeva il modello a ritentare ricerche ormai bloccate. Si prosegue e basta.
     if content.startswith("Limite di") or content.startswith("Il tool '"):
@@ -85,21 +88,25 @@ def grade_documents(state: dict) -> Literal["research_agent", "rewrite_question_
 
     print(f"\nValuto la rilevanza delle fonti dal tool '{last.name}'.")
 
-    # Soggetto PULITO per il confronto: il current_topic puo' essere un titolo lungo di
-    # proposta; la chiave canonica (es. "audi rs3") rende il giudizio piu' stabile ed evita
-    # di scartare fonti valide solo perche' non combaciano con tutta la frase.
+    # Soggetto pulito per il confronto: il current_topic può essere un titolo lungo di
+    # proposta; la chiave canonica (es. "audi rs3") rende il giudizio più stabile ed evita
+    # di scartare fonti valide solo perché non combaciano con tutta la frase.
     subject = canonical_topic(state.get("current_topic", "")) or (state.get("current_topic", "") or "")[:80]
 
+    #Il grader usato è sempre ministral 3, ma in questo caso gli sto chiedendo di rispondere in modo
+    #strutturato attraverso un prompt ingegnerizzato, in cui mi dovrà rispondere semplicemente si o no
     grader = llm.with_structured_output(GradeDocuments)
-    # Giudizio sull'UTILITA' sostanziale, non sulla sola presenza del tema: cosi' una pagina
-    # fatta di sole gallerie/navigazione/chiacchiere social o di soli video viene scartata
-    # anche se "parla" del veicolo, mentre una prova su strada o una scheda tecnica passa.
+
+    # Il giudizio di valutazione delle fonti è sulla qualità delle fonti trovate
+    # inerenti a quel veicolo oppure all'argomento trattato, se tra le fonti
+    # c'è spazzatura, come immagini, video, link e roba inutile dal punto di vista
+    # testuale, viene considerato come non valido e quindi viene scartato.
     prompt = (
-        f"Devi decidere se questo risultato di ricerca e' UTILE per scrivere un articolo "
+        f"Devi decidere se questo risultato di ricerca è utile per scrivere un articolo "
         f"tecnico sul veicolo/tema '{subject}'.\n"
         f"Rispondi 'yes' SOLO se contiene informazioni concrete e utili: specifiche, prova su "
         f"strada, dati di prestazioni/consumi/prezzi/sicurezza, analisi o recensione vera.\n"
-        f"Rispondi 'no' se e' perlopiu' navigazione del sito, elenchi di gallerie o foto, "
+        f"Rispondi 'no' se è perlopiù navigazione del sito, elenchi di gallerie o foto, "
         f"titoli ripetuti, chiacchiere o post social, pagine di soli video/link, senza reale "
         f"contenuto informativo sul veicolo.\n"
         f"Documento:\n{content}\n\nRispondi solo 'yes' o 'no'."

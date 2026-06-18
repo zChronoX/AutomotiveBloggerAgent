@@ -52,6 +52,8 @@ from typing import Literal
 
 from langgraph.types import interrupt, Command
 from langgraph.graph import END
+
+#Formato standard con cui "dialogare" con gli LLM. ToolMessage è essenziale per registrare gli strumenti usati.
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage, RemoveMessage
 
 from .llm import llm, drafting_llm
@@ -113,7 +115,7 @@ def clarification_node(state: dict):
 
     # Se abbiamo gia' raggiunto il limite di chiarimenti, procediamo comunque (evito i loop infinit)
     if clarif_count >= MAX_CLARIFICATIONS:
-        print("[FASE 0 - SCOPING] Limite chiarimenti raggiunto: procedo con quanto ho.")
+        print("Limite chiarimenti raggiunto, procedo comunque con il briefing.")
         return {"user_input": user_input, "status": "scoped"}
 
 
@@ -148,7 +150,7 @@ def clarification_node(state: dict):
             decision_reason = "modello"
         except Exception as e:
             # Se lo structured output fallisce, non blocchiamo il flusso
-            print(f"[FASE 0 - SCOPING] Clarification non riuscita ({e}): procedo senza chiarimenti.")
+            print(f"Clarification non riuscita ({e}): procedo senza chiarimenti.")
             return {"user_input": user_input, "status": "scoped"}
 
     if decision_need:
@@ -170,7 +172,7 @@ def clarification_node(state: dict):
         # A questo punto l'interrupt si e' risolto: logghiamo la decisione una volta sola
         # (il codice sopra l'interrupt si riesegue alla ripresa, qui sotto no).
         reason_lbl = "regola deterministica" if decision_reason == "deterministica" else "valutazione del modello"
-        print(f"\nRichiesta giudicata vaga ({reason_lbl}): chiesto chiarimento.")
+        print(f"\nRichiesta giudicata vaga: chiesto chiarimento.")
 
         if rtype == "ignore":
             # L'utente non vuole chiarire: procediamo con la richiesta originale
@@ -190,8 +192,8 @@ def clarification_node(state: dict):
         }
 
     # Richiesta chiara: registriamo la verifica e proseguiamo.
-    # In console NON stampiamo la "motivazione" del modello: il 3B spesso non motiva ma
-    # RISPONDE alla richiesta (es. propone temi), confondendo l'utente. Resta nel trace.
+    # In console non stampiamo la "motivazione" del modello: il 3B spesso non motiva ma
+    # risponde alla richiesta (es. propone temi), confondendo l'utente.
     print("\nRichiesta chiara: procedo con la pianificazione.")
     return {
         "user_input": user_input,
@@ -226,7 +228,7 @@ def kg_context_node(state: dict):
     overview = kg_topics_overview()
     print("\nPanoramica di copertura recuperata dal Knowledge Graph.")
 
-    # Recupero trend SOLO per le richieste di SUGGERIMENTO (non per la scrittura di post).
+    # Recupero trend solo per le richieste di suggerimento (non per la scrittura di post).
     # Quando l'utente chiede di scrivere un post su qualcosa di preciso i trend non servono al planner
     # Quando chiede "suggeriscimi argomenti" i trend sono essenziali: permettono al planner
     # di proporre temi basati sulle notizie reali invece che dalla sua conoscenza interna.
@@ -235,7 +237,7 @@ def kg_context_node(state: dict):
         trend_tool = tools_by_name.get("fetch_automotive_trends")
         if trend_tool:
             try:
-                print("\nRecupero notizie fresche dal feed RSS")
+                print("\nRecupero notizie dal feed RSS")
                 trends_result = str(trend_tool.invoke({"query": "novità automotive"}))
                 if trends_result and "errore" not in trends_result.lower()[:50]:
                     trends = trends_result
@@ -263,15 +265,15 @@ def planner_node(state: dict):
     trends = state.get("trends_summary", "") or "Nessun trend disponibile."
     brief = state.get("research_brief", "") or "Nessun brief disponibile (usa la richiesta originale)."
 
-    # Contesto per la CONTINUITA' e per evitare doppioni/invenzioni:
-    # - i post gia' PUBBLICATI (titoli reali): se l'utente chiede un confronto/seguito con
-    #   "qualcosa di gia' trattato", il planner deve pescare un modello REALE da qui;
-    # - le PROPOSTE in sospeso: cosi' sa cosa c'e' gia' in backlog ed evita di riproporlo.
+    # Contesto per la continuità e per evitare doppioni/invenzioni:
+    # - i post già pubblicati (titoli reali): se l'utente chiede un confronto/seguito con
+    #   "qualcosa di già trattato", il planner deve pescare un modello REALE da qui;
+    # - le proposte in sospeso: così sa cosa c'è già in backlog ed evita di riproporlo.
     published_posts = kg_recent_posts() or "(nessun post pubblicato finora)"
     pending_proposals = kg_proposed_titles() or "(nessuna proposta in sospeso)"
 
-    # Numero di post da pianificare estratto DINAMICAMENTE dalla richiesta dell'utente
-    # (es. "pianifica 4 post"). Se non specificato vale il default. E' il numero MASSIMO
+    # Numero di post da pianificare estratto dinamicamente dalla richiesta dell'utente
+    # (es. "pianifica 4 post"). Se non specificato vale il default. Rappresenta il numero massimo
     # di proposte; quante scriverne lo decide l'utente al gate editoriale.
     max_posts = extract_num_posts(user_input)
 
@@ -295,8 +297,8 @@ def planner_node(state: dict):
     except Exception as e:
         planned, reasoning = [], f"(Pianificazione strutturata non riuscita: {e})."
 
-    # Clamp deterministico al numero richiesto: il modello 3B a volte ignora la regola
-    # "ESATTAMENTE N" e genera comunque 3 proposte (visto con "scrivi 1 post" -> 3).
+    # Il modello 3B a volte ignorava la regola
+    # "esattamente N" e generava comunque 3 proposte.
     # Tagliamo qui per garantire il conteggio richiesto, senza dipendere dall'LLM.
     if max_posts and len(planned) > max_posts:
         planned = planned[:max_posts]
@@ -312,15 +314,14 @@ def planner_node(state: dict):
     }
 
 
-# ============================================================
-# GATE EDITORIALE (FASE 2.5 - HITL dopo il planning)
-# Dopo il planner l'utente NON parte automaticamente a scrivere: rivede le proposte e
+
+# Fase intermedia di planning
+# Dopo il planner l'utente non parte automaticamente a scrivere: rivede le proposte e
 # decide quali scrivere, quali modificare (con istruzioni), quali scartare e se vuole
-# proposte nuove per tornare al numero richiesto. Le selezionate vengono salvate subito
-# come backlog 'proposed' (crash-safe) e si entra nel ciclo di scrittura un post alla volta.
-# Il nodo si auto-instrada con Command: a se stesso (per ri-presentare il piano dopo le
+# proposte nuove per tornare al numero richiesto. Le proposte vengono salvate subito
+# come 'proposed' e si entra nel ciclo di scrittura un post alla volta.
+# Il nodo si auto-instrada a se stesso (per ri-presentare il piano dopo le
 # modifiche), a research_agent (per iniziare a scrivere) o a END (annullamento).
-# ============================================================
 
 # Formatta la lista di proposte in modo numerato e leggibile (per la presentazione HITL).
 def _format_proposals(plan: list) -> str:
@@ -346,10 +347,9 @@ def _proposal_to_storage(p: dict) -> dict:
     }
 
 
-# Costruisce l'aggiornamento di stato per ripartire pulito su un NUOVO post.
-# Svuota il canale messaggi con rimozione per-id (compatibile con ogni versione di
-# langgraph, senza dipendere dal sentinel REMOVE_ALL_MESSAGES) e azzera tutti gli
-# accumulatori per-post. Imposta status='planned' cosi' research_agent rifa' il
+# Costruisce l'aggiornamento di stato per ripartire pulito su un nuovo post.
+# Svuota il canale messaggi con rimozione per-id e azzera tutti gli
+# accumulatori per-post. Imposta status='planned' così research_agent rifà il
 # kickoff K-RAG da zero sul nuovo topic.
 def _reset_for_new_post(state: dict, next_post: dict) -> dict:
     removals = [RemoveMessage(id=m.id) for m in state.get("messages", []) if getattr(m, "id", None)]
@@ -371,26 +371,24 @@ def _reset_for_new_post(state: dict, next_post: dict) -> dict:
     }
 
 
-# Verbi-chiave per il parsing DETERMINISTICO della decisione editoriale.
-# Scelta di design: NON usiamo il modello per capire QUALI proposte e QUALE operazione
-# (sui test il 3B sbagliava i numeri e ignorava il refill). Numeri e operazione si
+# Verbi per il parsing deterministico della decisione editoriale.
+# Non usiamo il modello per capire quali proposte e quale operazione
+# (sui test il modellino sbagliava i numeri e ignorava il refill). Numeri e operazione si
 # ricavano con regex affidabili; il modello resta usato SOLO per rigenerare il testo
 # di una proposta o per generare quelle nuove, cioe' dove serve creativita'.
 _ED_DROP = ("scart", "elimin", "rimuov", "cancell", "togli il", "togli la", "togli i", "togli lo", "non mi interess", "leva il", "leva la")
 _ED_MODIFY = ("modific", "rendil", "rendet", "rendi ", "cambia", "trasform", "fallo", "falla", "fai un", "fai una", "allung", "accorci", "aggiungi", "invece", "confront", "recensi", "trasformal")
 _ED_WRITE = ("scriv", "tieni", "tien", "va bene", "vanno bene", "approv", "ok", "conferma", "procedi", "manten", "accett", "questi", "questo")
-# request_new: richiesta esplicita di NUOVE proposte (refill).
+# request_new: richiesta esplicita di nuove proposte (refill).
 _ED_NEW_RE = r"(propon\w*|rimpiazz\w*|sostitu\w*|aggiung\w*\s+(un|una|altr|nuov|altre|altri|qualc))"
 
 
 def _parse_editorial_decision(user_response: str, plan: list) -> EditorialDecision:
     """
-    Interpreta in modo DETERMINISTICO la risposta dell'utente al gate editoriale.
+    Interpreta in modo deterministico la risposta dell'utente al gate editoriale.
     Spezza la frase in clausole (separatori ; . a capo), e per ogni clausola ricava:
     i numeri delle proposte coinvolte e l'operazione dal verbo usato. Per le modifiche
-    si prende SOLO il primo numero come bersaglio (gli altri fanno parte dell'istruzione,
-    es. 'rendilo un confronto con la BMW Serie 3'). Niente dipendenza dal modello qui:
-    e' la parte dove l'affidabilita' conta di piu'.
+    si prende solo il primo numero come bersaglio.
     """
     dec = EditorialDecision()
     text = (user_response or "").strip()
@@ -402,7 +400,7 @@ def _parse_editorial_decision(user_response: str, plan: list) -> EditorialDecisi
     def in_range(nums):
         return [x for x in nums if 1 <= x <= n_plan]
 
-    # 1) Refill: segnale esplicito di nuove proposte (e relativo spunto, se presente).
+    # Segnale esplicito di nuove proposte (e relativo spunto, se presente).
     m_new = re.search(_ED_NEW_RE, low)
     if m_new:
         dec.request_new = True
@@ -412,7 +410,7 @@ def _parse_editorial_decision(user_response: str, plan: list) -> EditorialDecisi
                 dec.new_hint = clause.strip()
                 break
 
-    # 2) Azioni per-proposta, clausola per clausola.
+    # Azioni per-proposta, clausola per clausola.
     seen = set()
     for clause in re.split(r"[;\n.]+", text):
         c = clause.strip()
@@ -453,16 +451,16 @@ def _parse_editorial_decision(user_response: str, plan: list) -> EditorialDecisi
                 if x not in seen:
                     dec.actions.append(ProposalAction(index=x, action="write")); seen.add(x)
 
-    # 3) Fallback: "scrivili tutti"/"procedi"/"vanno bene" senza numeri -> scrivi TUTTE.
+    # Se scrivo di procedere (seguendo quelle parole) allora scrivo il post in autoamtico
     if not dec.actions and not dec.request_new:
-        if (re.search(r"tutt[ie]", low) or re.search(r"procedi|vanno bene|va bene|conferma|approv", low)) \
+        if (re.search(r"tutt[ie]", low) or re.search(r"procedi|vanno bene|va bene|conferma|approv|procedi pure", low)) \
            and not any(v in low for v in _ED_DROP) and not any(v in low for v in _ED_MODIFY):
             dec.actions = [ProposalAction(index=i + 1, action="write") for i in range(n_plan)]
 
     return dec
 
 
-# Rigenera UNA singola proposta applicando l'istruzione dell'utente. Le proposte che
+# Rigenera una singola proposta applicando l'istruzione dell'utente. Le proposte che
 # l'utente non chiede di modificare non passano mai di qui: restano identiche.
 def _regenerate_proposal(orig: dict, instruction: str, brief: str, kg_overview: str, published_posts: str = "") -> dict:
     gen = llm.with_structured_output(PostPlan)
@@ -478,8 +476,7 @@ def _regenerate_proposal(orig: dict, instruction: str, brief: str, kg_overview: 
     return gen.invoke([SystemMessage(content=prompt)]).model_dump()
 
 
-# Genera k proposte AGGIUNTIVE per il refill, evitando i temi gia' tenuti o scartati.
-# 'hint' e' un eventuale spunto specifico dell'utente (es. 'confronto con la BMW M3').
+# Genera k proposte aggiuntive per il refill, evitando i temi gia' tenuti o scartati.
 def _propose_more(k: int, brief: str, kg_overview: str, trends: str, exclude: list, hint: str = "", published_posts: str = "") -> list:
     gen = llm.with_structured_output(PlanningSchema)
     excl = "; ".join([e for e in exclude if e]) or "(nessuno)"
@@ -498,7 +495,7 @@ def editorial_review_node(state: dict) -> Command[Literal["editorial_review_node
     plan = state.get("planning_info") or []
     n = state.get("num_posts_requested") or (len(plan) or 3)
 
-    # Presentazione (codice eseguito anche ad ogni ripresa dell'interrupt: e' puro).
+    # Presentazione (codice eseguito anche ad ogni ripresa dell'interrupt).
     shortfall = max(0, n - len(plan))
     legend = (
         "Cosa vuoi fare? Esempi:\n"
@@ -536,7 +533,7 @@ def editorial_review_node(state: dict) -> Command[Literal["editorial_review_node
                      else str(answer.get("args", "")))
     decision = _parse_editorial_decision(user_response, plan)
 
-    # Validazione e smistamento delle azioni (mostrate 1-based -> interne 0-based).
+    # Validazione e smistamento delle azioni.
     # Da un'unica lista di azioni ricaviamo i tre insiemi che servono al resto del nodo.
     # In caso di indice duplicato vince l'ultima azione indicata per quella proposta.
     total = len(plan)
@@ -546,7 +543,7 @@ def editorial_review_node(state: dict) -> Command[Literal["editorial_review_node
             action_by_idx[a.index - 1] = (a.action, (a.instruction or "").strip())
     write_idx = sorted([i for i, (act, _) in action_by_idx.items() if act == "write"])
     drop_idx = {i for i, (act, _) in action_by_idx.items() if act == "drop"}
-    # Una 'modify' senza istruzione non e' azionabile: la tratto come approvazione.
+    # Una 'modify' senza istruzione non va bene, viene trattata come approvazione.
     modify = [(i, instr) for i, (act, instr) in action_by_idx.items() if act == "modify" and instr]
     write_idx = sorted(set(write_idx) | {i for i, (act, instr) in action_by_idx.items() if act == "modify" and not instr})
     request_new = bool(decision.request_new)
@@ -562,10 +559,10 @@ def editorial_review_node(state: dict) -> Command[Literal["editorial_review_node
     kg_overview = state.get("kg_summary", "") or ""
     trends = state.get("trends_summary", "") or "Nessun trend disponibile."
     # Titoli reali dei post gia' pubblicati: servono a modify/refill per riferirsi a
-    # modelli REALI (continuita') invece di inventarne (es. "Giulia Quattrosotto").
+    # modelli reali (continuità) invece di inventarne (es. "Giulia Quattrosotto").
     published_posts = kg_recent_posts() or "(nessun post pubblicato finora)"
 
-    # Cambiamenti STRUTTURALI espliciti (modifica/scarto/refill): applico e RI-PRESENTO.
+    # Cambiamenti strutturali espliciti (modifica/scarto/refill): applico e ri-presento.
     if structural:
         new_plan = list(plan)
         for i, instr in modify:
@@ -598,17 +595,15 @@ def editorial_review_node(state: dict) -> Command[Literal["editorial_review_node
             "reasoning_trace": trace(state, "Gate editoriale: piano aggiornato (modifiche/scarti/refill)."),
         })
 
-    # --- Turno di SOLA SELEZIONE ---
-    # Invariante robusta (indipendente dal fatto che il modello emetta o meno 'drop'):
-    # si finalizza SOLO se l'utente seleziona TUTTE le proposte mostrate. Se ne seleziona
-    # un sottoinsieme, le altre sono considerate scartate, il piano si riduce e lo
-    # ri-presento: a quel punto, essendo sceso sotto N, compare la domanda del refill.
+    # Qui approvo solo le proposte, senza fare modifiche esplicite.
+    # Nel caso in cui l'utente approva la prima e la terza proposta su 3, la proposta 2 viene
+    # scartata implicitamente. Il piano torna a 2, ma l'utente ne aveva chiesti 3. Quindi
+    # compare l'opzione refill nel caso in cui volesse altre proposte.
     selected_idx = sorted(set(write_idx))
     if not selected_idx:
         return Command(goto="editorial_review_node")
 
     if set(selected_idx) != set(range(len(plan))):
-        # Sottoinsieme: scarto le non selezionate (le ricordo per non riproporle) e riduco.
         rejected = list(state.get("rejected_topics") or [])
         for j, p in enumerate(plan):
             if j not in selected_idx:
@@ -621,8 +616,8 @@ def editorial_review_node(state: dict) -> Command[Literal["editorial_review_node
             "reasoning_trace": trace(state, "Gate editoriale: selezione ridotta, ripropongo (eventuale refill)."),
         })
 
-    # L'utente ha selezionato TUTTE le proposte mostrate -> finalizzo.
-    # Salvo l'intera selezione come backlog 'proposed' (crash-safe) e parto col primo post.
+    # L'utente ha selezionato tutte le proposte mostrate
+    # Salvo tutte le proposte come proposal, e procedo con la prima
     selected = list(plan)
     try:
         print(f"\n{add_proposals([_proposal_to_storage(p) for p in selected])}")
@@ -656,7 +651,7 @@ def _parse_suggestion_choice(text: str, pending: list, plan_topics: list, rss_ti
     def _pick(lst, n):
         return lst[n - 1] if 1 <= n <= len(lst) else None
 
-    # 1) Riferimento esplicito a una lista + numero.
+    # Riferimento esplicito a una lista + numero.
     m = re.search(r"(?:propost\w*|sospes\w*|recuperabil\w*)\D{0,12}(\d+)", low)
     if m:
         return _pick(pending, int(m.group(1)))
@@ -667,14 +662,14 @@ def _parse_suggestion_choice(text: str, pending: list, plan_topics: list, rss_ti
     if m:
         return _pick(rss_titles, int(m.group(1)))
 
-    # 2) Numero nudo: stessa priorita' con cui le liste vengono mostrate.
+    # Numero nudo: stessa priorita' con cui le liste vengono mostrate.
     m = re.search(r"\b(\d+)\b", low)
     if m:
         n = int(m.group(1))
         return _pick(pending, n) or _pick(plan_topics, n) or _pick(rss_titles, n)
 
-    # 3) Match per sottostringa sui titoli (es. "quello sulla Porsche").
-    #    Cerco le parole significative della risposta dentro i titoli.
+    # Match per sottostringa sui titoli (es. "quello sulla Porsche").
+    # Cerco le parole significative della risposta dentro i titoli.
     words = [w for w in re.findall(r"[a-zA-Zàèéìòù0-9]{4,}", low)
              if w not in ("quello", "quella", "sulla", "sullo", "sulle", "sugli",
                           "post", "articolo", "scrivi", "scrivere", "vorrei", "facciamo")]
@@ -685,16 +680,16 @@ def _parse_suggestion_choice(text: str, pending: list, plan_topics: list, rss_ti
                 if any(w in tl for w in words):
                     return title
 
-    # 4) Testo libero con un minimo di sostanza: lo uso come tema nuovo.
+    # Testo libero con un minimo di sostanza: lo uso come tema nuovo.
     if len(t) >= 8:
         return t
     return None
 
 
-# Presenta i suggerimenti (proposte in sospeso > calendario > RSS) e POI chiede
-# all'utente se vuole scrivere uno dei temi proposti (gate HITL "choose_suggestion").
+# Presenta i suggerimenti (proposte in sospeso > calendario > RSS) e poi chiede
+# all'utente se vuole scrivere uno dei temi proposti (HITL "choose_suggestion").
 # Se sceglie un tema, il flusso riparte dal brief con la nuova richiesta di scrittura;
-# se rifiuta (INVIO/no), si chiude come prima lasciando i suggerimenti come risposta.
+# se rifiuta (invio/no), si chiude come prima lasciando i suggerimenti come risposta.
 def suggest_topics_node(state: dict) -> Command[Literal["suggest_topics_node", "brief_node", "__end__"]]:
     plan = state.get("planning_info") or []
     trends = state.get("trends_summary", "")
@@ -707,18 +702,18 @@ def suggest_topics_node(state: dict) -> Command[Literal["suggest_topics_node", "
     pending_text = kg_pending_proposals()
     pending_titles = kg_pending_titles_list()
     if pending_text:
-        parts.append(pending_text)
+        parts.append(pending_text + "\n")
 
     # 2) Nuovo calendario editoriale proposto dal planner.
     plan_topics = [p.get("topic", "") for p in plan]
     if plan:
         out = ["Proposta di calendario editoriale:\n"]
         for i, p in enumerate(plan, 1):
-            out.append(f"{i}. [{p['post_category']}] {p['topic']}\n   Motivazione: {p['justification']}")
+            out.append(f"{i}. [{p['post_category']}] {p['topic']}\n   Motivazione: {p['justification']}\n")
         parts.append("\n".join(out))
     elif not pending_text:
         # Niente di pianificato e nessuna proposta in sospeso: chiedo di precisare.
-        parts.append("Non sono riuscito a pianificare. Specifica meglio l'area tematica.")
+        parts.append("Non sono riuscito a pianificare. Specifica meglio l'area tematica.\n")
 
     # 3) Feed RSS come alternativa, solo come ripiego rispetto ai punti sopra.
     rss_titles = []
@@ -732,7 +727,7 @@ def suggest_topics_node(state: dict) -> Command[Literal["suggest_topics_node", "
 
     text = "\n\n".join(parts) if parts else "Non ho proposte da mostrare al momento."
 
-    # Gate HITL: chiedo se vuole scrivere uno dei temi proposti.
+    # Chiedo se vuole scrivere uno dei temi proposti.
     request = {
         "action_request": {"action": "choose_suggestion", "args": {}},
         "config": {
@@ -762,7 +757,7 @@ def suggest_topics_node(state: dict) -> Command[Literal["suggest_topics_node", "
         return Command(goto="suggest_topics_node")
 
     # Tema scelto: costruisco la nuova richiesta di scrittura e riparto dal brief,
-    # riusando l'intero flusso (brief -> KG -> planner -> gate editoriale -> ...).
+    # riusando l'intero flusso (brief -> KG -> planner -> gate editoriale ->).
     new_input = f"Scrivi un post su: {tema}"
     print(f"\nOttimo: preparo il piano per '{tema}'.")
     return Command(goto="brief_node", update={
@@ -807,7 +802,7 @@ def research_agent_node(state: dict):
                      and "non esiste" not in local_docs.lower()[:40])
         if has_local:
             local_block = local_docs
-            local_sources = [f"[retrieve_local_documents] {local_docs[:600]}"]
+            local_sources = [f"[retrieve_local_documents] {local_docs[:800]}"]
             # Estraiamo i nomi dei file di origine per la trace (formato "- file (distanza)")
             doc_refs = re.findall(r"\[Fonte \d+ - ([^\]]+)\]", local_docs)
             rag_observation = (
@@ -1117,8 +1112,8 @@ def review_node(state: dict) -> Command[Literal["update_kg_node", "drafting_node
 # per il KG.
 def update_kg_node(state: dict) -> Command[Literal["next_post_node"]]:
     topic = state.get("current_topic") or "argomento automotive"
-    # La categoria viene dal POST CORRENTE: col ciclo multi-post il post in scrittura
-    # puo' non essere il primo del piano. Fallback su planning_info[0] per sicurezza.
+    # La categoria viene dal post corrente col ciclo multi-post il post in scrittura
+    # potrebbe non essere il primo del piano. Fallback su planning_info[0] per sicurezza.
     current = state.get("current_post") or {}
     category = current.get("post_category") or current.get("category")
     if not category:
@@ -1139,6 +1134,7 @@ def update_kg_node(state: dict) -> Command[Literal["next_post_node"]]:
             f"A stunning high-resolution photograph of the subject: '{topic}'. "
             "Professional automotive photography, photorealistic, dramatic cinematic "
             "lighting, sharp focus, ultra detailed, shot by a professional car photographer."
+            "Don't include any text in the image."
         )
         cover_result = generate_cover_image.invoke({"prompt": cover_prompt})
         print(f"\n{cover_result}")
@@ -1212,14 +1208,14 @@ def update_kg_node(state: dict) -> Command[Literal["next_post_node"]]:
     })
 
 
-# ============================================================
-# GATE "PROSSIMO POST" (HITL nel ciclo di scrittura multi-post)
+
+# HITL nel ciclo di scrittura multi-post)
 # Dopo ogni post (pubblicato in update_kg_node o scartato in review_node) si passa di
 # qui. Se restano post selezionati, l'agente si ferma e chiede all'utente se continuare,
 # con quale post, o fermarsi. Se si ferma, i rimanenti restano salvati come proposte nel
 # KG (gia' inseriti alla selezione) ed e' tutto recuperabile. Niente avanzamento
 # automatico: e' l'utente a guidare il ritmo (gestione dei tempi di esecuzione locale).
-# ============================================================
+
 
 # Sceglie quale post della coda scrivere in base alla risposta dell'utente:
 # un numero esplicito, un match sul topic, altrimenti il primo.
@@ -1269,7 +1265,7 @@ def next_post_node(state: dict) -> Command[Literal["research_agent", "__end__"]]
         print("\nMi fermo qui: i post rimasti restano salvati come proposte nel KG.")
         return Command(goto=END, update={"status": "stopped_with_pending"})
 
-    # accept -> primo della coda; response -> interpreto quale post scrivere ora.
+    # accetto il primo post della coda e capisco quale post scrivere ora
     chosen = 0
     if rtype == "response":
         text = (answer.get("args", "") if isinstance(answer.get("args"), str)
@@ -1319,9 +1315,8 @@ def resilient_tool_node(state: dict):
         )
 
     # Registro delle chiamate gia' eseguite (nome tool + argomenti normalizzati):
-    # se il modello richiama un tool con gli STESSI argomenti, blocco la ripetizione.
-    # Se non ha funzionato la prima volta, non funzionera' nemmeno la seconda
-    # (visto nei test: fetch_vehicle_specs chiamato 3 volte con la stessa query fallita).
+    # se il modello richiama un tool con gli stessi argomenti, blocco la ripetizione.
+    # Se non ha funzionato la prima volta, non funzionera' nemmeno la seconda.
     done_calls = list(state.get("done_tool_calls") or [])
 
     for call in tool_calls:
@@ -1387,7 +1382,7 @@ def resilient_tool_node(state: dict):
             outputs.append(ToolMessage(content=content, name=name, tool_call_id=call_id))
             continue
 
-        # Blocco delle chiamate RIPETUTE: stessa coppia (tool, argomenti) gia' eseguita
+        # Blocco delle chiamate ripetute: stessa coppia (tool, argomenti) gia' eseguita
         # in questo giro. Ripetere una chiamata identica non puo' dare un esito diverso:
         # rispondo subito istruendo il modello a usare quanto gia' raccolto o a cambiare
         # strategia, senza consumare tempo (fetch_vehicle_specs impiega anche 30s).
@@ -1423,7 +1418,7 @@ def resilient_tool_node(state: dict):
                 print(f"\nEccezione nel tool '{name}': {e}")
 
         # Anteponiamo l'etichetta "Observation (<tool>):" al risultato: cosi' l'osservazione
-        # e' parte ESPLICITA del flusso di messaggi (la vede il modello al passo successivo
+        # e' parte esplicita del flusso di messaggi (la vede il modello al passo successivo
         # ed e' visibile in LangSmith come messaggio tool), chiudendo il ciclo ReAct in modo
         # leggibile. NB: i messaggi di servizio (limite/blocco) sono creati altrove e NON
         # passano di qui, quindi i controlli startswith del grader restano validi.

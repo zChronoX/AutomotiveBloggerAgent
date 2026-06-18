@@ -8,7 +8,7 @@ from langsmith import Client
 load_dotenv()
 client = Client()
 
-dataset_name = "AutomotiveBloggerAgent V2"
+dataset_name = "AutomotiveBloggerAgent Dataset 2"
 dataset_description = (
     "Dataset esteso per la valutazione finale del AutomotiveBloggerAgent. "
     "Copre tutte le casistiche: confronti tra veicoli (compare_vehicles + modello "

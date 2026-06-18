@@ -1,5 +1,7 @@
 
-" File di configurazione dell'intero agente, dove scegliamo parametri operativi con la possibilità di sovrascriverli direttamente dell'env."
+""" File di configurazione dell'intero agente, 
+    dove scegliamo parametri operativi con la possibilità di sovrascriverli direttamente dell'env.
+"""
 
 import os
 from dataclasses import dataclass, fields
@@ -25,7 +27,7 @@ class Configuration:
     I valori possono essere sovrascritti da variabili d'ambiente o da un RunnableConfig.
     """
 
-    # Parametri dei modelli locali (Ollama)
+    # Parametri dei modelli locali con Ollama
     # Ho scelto lo stesso modello tutto il progetto, e per la ricerca.
     model_name: str = "ministral-3:3b"
     draft_model_name: str = "ministral-3:3b"
@@ -113,13 +115,11 @@ def check_langsmith_setup() -> bool:
     project = os.environ.get("LANGSMITH_PROJECT", "(default)")
 
     if not tracing:
-        print("[LangSmith] Tracing DISATTIVATO (LANGSMITH_TRACING != 'true'). "
-              "Le esecuzioni non verranno tracciate.")
+        print("Tracing disattivato. Le esecuzioni non verranno tracciate.")
         return False
     if not api_key:
-        print("[LangSmith] ATTENZIONE: LANGSMITH_TRACING=true ma manca LANGSMITH_API_KEY nel .env. "
-              "Il tracing fallira'.")
+        print("Tracing attivo ma manca LANGSMITH_API_KEY nel .env. Il tracing fallira'.")
         return False
 
-    print(f"[LangSmith] Tracing ATTIVO. Progetto: '{project}'.")
+    print(f"Tracing attivo. Progetto: '{project}'.")
     return True

@@ -67,7 +67,7 @@ def _ask_review_choice() -> dict:
 def _handle_clarification(request, config):
     question = request.get("description", "Puoi chiarire meglio la tua richiesta?")
     print("\n" + "-" * 56)
-    print("[CHIARIMENTO] L'agente ha bisogno di una precisazione:")
+    print("L'agente ha bisogno di una precisazione:")
     print(f"  {question}")
     print("(Scrivi la tua risposta, oppure premi INVIO per procedere comunque.)")
     risposta = input("La tua risposta: ").strip()
@@ -79,12 +79,12 @@ def _handle_clarification(request, config):
 
     return graph.invoke(Command(resume=resume), config)
 
-# Gestisce il gate editoriale (HITL fase 2.5). Mostra le proposte pianificate e raccoglie
+# Gestisce la fase editoriale HITL. Mostra le proposte pianificate e raccoglie
 # la decisione dell'utente in linguaggio naturale (quali scrivere, quali modificare con
-# istruzioni, quali scartare, se proporne di nuove). INVIO vuoto o "annulla" -> annulla tutto.
+# istruzioni, quali scartare, se proporne di nuove). INVIO vuoto o "annulla" allora annulla tutto.
 def _handle_editorial_review(request, config):
     print("\n" + "=" * 56)
-    print("  REVISIONE DEL PIANO EDITORIALE")
+    print("Revisione del piano editoriale: \n")
     print("=" * 56)
     print(f"\n{request.get('description', '')}\n")
     risposta = input("La tua scelta (INVIO o 'annulla' per annullare): ").strip()
@@ -103,7 +103,7 @@ def _handle_editorial_review(request, config):
 # (approva/modifica/scarta) e riprende il grafo iniettando la risposta.
 def _handle_review_draft(request, config):
     print("\n" + "=" * 56)
-    print("  BOZZA PRONTA PER LA REVISIONE")
+    print("Bozza pronta per essere revisionata: \n")
     print("=" * 56)
     print(f"\n{request.get('description', '')}\n")
     scelta = _ask_review_choice()
@@ -121,9 +121,9 @@ def _handle_review_draft(request, config):
 # "continua" prende il primo; un numero o un tema scelgono quale scrivere.
 def _handle_continue(request, config):
     print("\n" + "-" * 56)
-    print("  PROSSIMO POST")
+    print("  Prossimo post: \n")
     print(f"\n{request.get('description', '')}\n")
-    risposta = input("Continua con quale? (INVIO o 'fermati' per fermarti): ").strip()
+    risposta = input("Continua con quale? (Invio o 'fermati' per fermarti): ").strip()
     if not risposta or risposta.lower() in ("fermati", "basta", "stop", "no"):
         resume = {"type": "ignore"}
     elif risposta.lower() in ("continua", "si", "sì", "vai", "prosegui"):
@@ -138,7 +138,7 @@ def _handle_continue(request, config):
 # altrimenti la scelta viene interpretata dal nodo e si riparte verso la scrittura.
 def _handle_choose_suggestion(request, config):
     print("\n" + "=" * 56)
-    print("  SUGGERIMENTI DELL'AGENTE")
+    print("  Suggerimenti dell'agente: \n")
     print("=" * 56)
     print(f"\n{request.get('description', '')}\n")
     print("Vuoi scrivere uno di questi temi? Indica quale (es. 'la proposta 1',")
@@ -154,7 +154,7 @@ def _handle_choose_suggestion(request, config):
 
 # Cuore della gestione HITL: finche' il grafo si ferma su un interrupt, lo smista
 # all'handler giusto in base all'azione. Gestisce catene di pause concatenate
-# (chiarimento -> gate editoriale -> revisione bozza -> prossimo post -> ...).
+# (chiarimento -> gate editoriale -> revisione bozza -> prossimo post).
 def _dispatch_interrupts(result, config):
     request = _extract_interrupt(result)
     while request:
@@ -183,7 +183,7 @@ def run_agent():
     while True:
         user_input = input("\n[TU]: ").strip()
         if user_input.lower() in ("esci", "quit", "exit"):
-            print("[INFO] Chiusura del Copilot. A presto!")
+            print("Chiusura dell'AutomotiveBloggerAgent. A presto!")
             break
         if not user_input:
             continue
@@ -220,7 +220,7 @@ def run_agent():
         elif status == "planning_cancelled":
             print("\nPianificazione annullata: nessun post scritto.")
         elif status == "topics_suggested":
-            # I suggerimenti sono gia' stati mostrati dal gate HITL: chiudo e basta.
+            # I suggerimenti sono gia' stati mostrati dal gate HITL, chiudo e basta.
             print("\nOk! Quando vuoi scrivere uno di questi temi, chiedimelo pure.")
         else:
             # Fallback generico.

@@ -3,11 +3,15 @@ Definizione e compilazione del grafo LangGraph.
 Assemblaggio nodi, edges e compilare.
 """
 
+
+#Import degli stati del grafo, START è per iniziare, END è il punto d'uscita.
 from langgraph.graph import StateGraph, END, START
+#Il memory saver è importante perché permette all'agente di ricordare
+#lo stato della conversazione da un punto all'altro.
 from langgraph.checkpoint.memory import MemorySaver
 
-from .state import State, StateInput
-from .nodes import (
+from agent.state import State, StateInput
+from agent.nodes import (
     clarification_node,
     brief_node,
     kg_context_node,
@@ -24,12 +28,12 @@ from .nodes import (
     update_kg_node,
     next_post_node,
 )
-from .routing import (
+from agent.routing import (
     route_after_clarification, route_after_planner,
     route_after_research, grade_documents,
 )
 
-
+#Metodo che inizializza il grafo
 def build_graph(checkpointer="default"):
     """Costruisce e compila il grafo dell'agente blogger.
     checkpointer:
@@ -46,8 +50,6 @@ def build_graph(checkpointer="default"):
     workflow.add_node("brief_node", brief_node)
     workflow.add_node("kg_context", kg_context_node)
     workflow.add_node("planner", planner_node)
-    # Gate editoriale (HITL): dopo il planner l'utente sceglie quali post scrivere,
-    # ne modifica/scarta alcuni o ne chiede di nuovi. Si auto-instrada con Command.
     workflow.add_node("editorial_review_node", editorial_review_node)
     workflow.add_node("suggest_topics_node", suggest_topics_node)
     workflow.add_node("research_agent", research_agent_node)
@@ -58,22 +60,12 @@ def build_graph(checkpointer="default"):
     workflow.add_node("drafting_node", drafting_node)
     workflow.add_node("review_node", review_node)
     workflow.add_node("update_kg_node", update_kg_node)
-    # Gate "prossimo post" (HITL): dopo ogni post pubblicato/scartato decide se
-    # continuare con i selezionati rimasti, con quale, o fermarsi. Si auto-instrada.
     workflow.add_node("next_post_node", next_post_node)
-
-    # Edges
-    # FASE 0 - Scoping: clarification (con eventuale loop) -> brief -> KG
     workflow.add_edge(START, "clarification_node")
     workflow.add_conditional_edges("clarification_node", route_after_clarification)
     workflow.add_edge("brief_node", "kg_context")
-
     workflow.add_edge("kg_context", "planner")
     workflow.add_conditional_edges("planner", route_after_planner)
-    # suggest_topics_node NON ha piu' un edge statico verso END: e' un gate HITL che
-    # si auto-instrada con Command (END se l'utente non sceglie nulla, brief_node se
-    # sceglie un tema da scrivere, se' stesso se la scelta non e' comprensibile).
-
     workflow.add_conditional_edges("research_agent", route_after_research)
     workflow.add_conditional_edges("revision_research_node", route_after_research)
     workflow.add_edge("forced_search_node", "tools")
@@ -91,6 +83,8 @@ def build_graph(checkpointer="default"):
 
 # Istanza per costruire il grafico con la memoria quando lo uso da terminiale
 graph = build_graph()
+
+
 
 def make_studio_graph():
     """Entry point per LangGraph Studio (grafo senza checkpointer interno)."""

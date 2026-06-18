@@ -1,8 +1,7 @@
 """
 Definizione dello stato dell'agente e schemi di pianificazione.
-Soddisfa i requisiti:
-- MCP / State Management: stato esplicito aggiornato ad ogni step.
-- Planning: schema strutturato per la sequenza di post.
+Gli schemi rappresentano la struttura che il modello deve seguire per rispondere
+mentre lo stato sarebbero le informazioni che vengono passate da un nodo all'altro.
 """
 
 from pydantic import BaseModel, Field
@@ -11,10 +10,12 @@ from typing import List, Optional
 from langgraph.graph import MessagesState
 
 
-# ============================================================
-# SCHEMI DI SCOPING
-# User Clarification + Brief Generation
-# ============================================================
+# Schemi della fase iniziale
+
+
+# ClarifyWithUser, questo schema viene usato dal nodo clarification_node
+# per capire se la richiesta dell'utente è chiara o vaga. Se è vaga, l'agente
+# deve chiedere chiarimenti all'utente prima di procedere.
 class ClarifyWithUser(BaseModel):
     """
     Decisione strutturata sulla necessita' di chiarimenti. Usata nella fase di scoping per capire se servono chiarimenti o no.
@@ -30,6 +31,9 @@ class ClarifyWithUser(BaseModel):
     )
 
 
+# ResearchBrief, questo schema viene usato dal nodo research_brief_node
+# e serve per riformulare la richiesta dell'utente in un obiettivo editoriale chiaro.
+# L'output del nodo clarification_node viene passato come input a questo nodo.
 class ResearchBrief(BaseModel):
     """
     Brief strutturato che trasforma la richiesta dell'utente in un obiettivo editoriale chiaro per le richieste successive.
@@ -38,13 +42,17 @@ class ResearchBrief(BaseModel):
         description="Il tema del post riformulato in modo chiaro e specifico, pronto per la pianificazione."
     )
     angle: str = Field(
-        description="L'angolo/taglio editoriale (es. recensione tecnica, guida pratica, confronto, novita')."
+        description="L'angolo editoriale (es. recensione tecnica, guida pratica, confronto, novita')."
     )
     notes: str = Field(
         description="Note utili al planning: aspetti da coprire, vincoli, pubblico di riferimento."
     )
 
 
+
+# KGExtraction, questo schema viene usato dal nodo kg_extraction_node
+# e serve per estrarre conoscenza da un post approvato, per arricchire il KG
+# con i 'key claims' e le 'relationships between topics' richiesti dalle specifiche.
 class KGExtraction(BaseModel):
     """
     Estrazione strutturata di conoscenza da un post approvato, per arricchire il KG
@@ -58,17 +66,25 @@ class KGExtraction(BaseModel):
         default_factory=list,
         description="2-3 argomenti brevi correlati (1-3 parole), per collegare il post ad altri nel blog."
     )
+
+
+#Schemi di pianificazione editoriale
+
+# PostPlan, questo schema viene usato dal nodo editorial_review_node
+# serve per pianificare un singolo post del blog. 
 class PostPlan(BaseModel):
     """Pianificazione di un singolo post del blog."""
     topic: str = Field(description="L'argomento principale del post")
     justification: str = Field(
-        description="Giustificazione editoriale per la scelta di questo argomento (perche' e perche' ORA)"
+        description="Giustificazione editoriale per la scelta di questo argomento (perchè e perchè adesso?)"
     )
     post_category: Literal["events", "how_to", "review", "news"] = Field(
         description="La categoria del post (es. eventi imminenti, tutorial, recensione, news)"
     )
 
 
+#PlanningSchema, viene usato dal nodo planning_node
+#serve per pianificare un elenco di post del blog. 
 class PlanningSchema(BaseModel):
     """Output del processo di pianificazione editoriale: una sequenza ordinata di post.
     con il campo reasoning che documenta il ragionamento del modello sulla scelta ed ordine dei post.
@@ -79,27 +95,24 @@ class PlanningSchema(BaseModel):
     planned_posts: List[PostPlan] = Field(description="Sequenza ordinata dei post pianificati")
 
 
-# ============================================================
-# SCHEMA DI REVISIONE EDITORIALE (gate HITL dopo il planning)
-# Interpreta in modo strutturato la risposta in linguaggio naturale dell'utente
-# davanti alla lista di proposte. Scelta di design: invece di piu' liste separate
-# (di cui una annidata), usiamo UNA SOLA lista di azioni, una per proposta menzionata,
-# con un'azione esplicita (write/modify/drop). Per un modello piccolo e' molto piu'
-# affidabile scegliere un enum per ogni proposta che decidere in quale lista mettere
-# un indice: prima il 3B tendeva a buttare tutto in 'to_write' ignorando le modifiche.
-# ============================================================
+#Schemi di revisione
+
+# ProposalAction, viene usato dal nodo editorial_review_node
+# serve per decidere cosa fare con una singola proposta: scriverla, modificarla o scartarla.
 class ProposalAction(BaseModel):
-    """Azione decisa dall'utente su UNA singola proposta, identificata dal suo numero."""
-    index: int = Field(description="Il NUMERO della proposta come mostrato nella lista (1-based)")
+    """Azione decisa dall'utente su una singola proposta, identificata dal suo numero."""
+    index: int = Field(description="Il numero della proposta come mostrato nella lista")
     action: Literal["write", "modify", "drop"] = Field(
-        description="write = scrivila cosi' com'e'; modify = cambiala (serve instruction); drop = scartala"
+        description="write = scrivila cosi' com'è; modify = cambiala; drop = scartala"
     )
     instruction: str = Field(
         default="",
-        description="SOLO se action='modify': cosa cambiare di questa proposta (l'istruzione dell'utente)"
+        description="solo se action='modify': cosa cambiare di questa proposta"
     )
 
-
+# EditorialDecision, viene usato dal nodo editorial_review_node
+# serve per raccogliere le decisioni dell'utente riguardo alle proposte di post.
+# le raccoglie tutte quante in una unica lista.
 class EditorialDecision(BaseModel):
     """Decisione editoriale dell'utente: una voce per ogni proposta che ha menzionato."""
     actions: List[ProposalAction] = Field(
@@ -108,17 +121,15 @@ class EditorialDecision(BaseModel):
     )
     request_new: bool = Field(
         default=False,
-        description="True SOLO se l'utente chiede esplicitamente nuove proposte/di rimpiazzare le scartate"
+        description="true se l'utente chiede esplicitamente nuove proposte/di rimpiazzare le scartate"
     )
     new_hint: str = Field(
         default="",
-        description="Eventuale spunto specifico per le nuove proposte (es. 'confronto con la BMW M3')"
+        description="Eventuale spunto specifico per le nuove proposte"
     )
 
 
-# ============================================================
-# INPUT / STATO (requisito "MCP / State Management")
-# ============================================================
+# Inizialmente al grafo serve l'input dell'utente per avviare il processo di pianificazione.
 class StateInput(TypedDict):
     """Input iniziale fornito dall'utente per avviare l'agente.
     passo solo la richiesta dell'utente
@@ -135,10 +146,13 @@ class State(MessagesState):
 
     Mappa con i campi richiesti dalle specifiche (State Management) ed extra:
       - user_input      -> input utente
-      - messages        -> tool outputs (ereditato)
       - reasoning_trace -> traccia di ragionamento (ReAct)
       - kg_summary      -> sintesi del Knowledge Graph
+      - clarification_count -> numero di volte che viene chiesto chiarimenti all'utente
       - planning_info   -> informazioni di pianificazione (sequenza di post)
+      - num_posts_requested-> numero di post richiesti dall'utente
+      - selected_posts  -> Coda dei post che l'utente ha scelto di scrivere.
+      - rejected_topics -> Lista dei topic gia' scartati dall'utente nel gate editoriale.
       - research_brief  -> brief strutturato che trasforma la richiesta dell'utente in un obiettivo editoriale chiaro
       - current_topic   -> argomento del post corrente
       - trends_summary  -> sintesi dei trend RSS
@@ -146,7 +160,7 @@ class State(MessagesState):
       - local_sources   -> fonti locali trovate per il post corrente
       - raw_notes       -> note grezze raccolte durante la ricerca
       - forced_web_search-> flag del guardrail "verifica fonti": True dopo che il sistema ha forzato una
-      ricerca web perche' il modello stava per scrivere senza alcuna fonte. Evita i loop.
+                            ricerca web perche' il modello stava per scrivere senza alcuna fonte. Evita i loop.
       - web_search_count -> contatore delle ricerche web del giro corrente (tetto MAX_WEB_SEARCHES).
       - draft_content    -> bozza del post corrente
       - human_feedback   -> feedback umano sulla bozza
@@ -167,16 +181,14 @@ class State(MessagesState):
     current_topic: Optional[str]
     planning_info: Optional[List[dict]]
 
-    # --- Pianificazione multi-post (gate editoriale + ciclo di scrittura) ---
     # Numero massimo di post richiesto dall'utente (dinamico, estratto dalla richiesta).
     # Serve al refill: se scarto proposte e scendo sotto questo numero, l'agente puo'
     # propormene di nuove per tornare a questo target.
     num_posts_requested: Optional[int]
-    # Coda dei post che l'utente ha scelto di scrivere (lista di PostPlan come dict).
+    # Coda dei post che l'utente ha scelto di scrivere.
     # Viene consumata un post alla volta dal ciclo di scrittura.
     selected_posts: Optional[List[dict]]
-    # Il PostPlan del post attualmente in scrittura (per leggere categoria/giustificazione
-    # corrette, invece di assumere sempre planning_info[0]).
+    # Il PostPlan del post attualmente in scrittura.
     current_post: Optional[dict]
     # Topic gia' scartati dall'utente nel gate editoriale: il refill li evita per non
     # riproporre cose che l'utente ha gia' rifiutato.
@@ -213,9 +225,8 @@ class State(MessagesState):
     web_search_count: Optional[int]
 
     # Firme (nome tool + argomenti) delle chiamate gia' eseguite nel giro corrente.
-    # Serve a bloccare le chiamate RIPETUTE identiche: se un tool non ha trovato nulla
-    # con certi argomenti, richiamarlo uguale non dara' un risultato diverso (visto nei
-    # test: fetch_vehicle_specs invocato 3 volte con la stessa query fallita).
+    # Serve a bloccare le chiamate ripetute identiche: se un tool non ha trovato nulla
+    # con certi argomenti, richiamarlo uguale non dara' un risultato diverso.
     done_tool_calls: Optional[List[str]]
 
     # Drafting + Human-in-the-loop

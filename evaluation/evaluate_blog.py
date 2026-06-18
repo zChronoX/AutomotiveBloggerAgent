@@ -84,8 +84,8 @@ def _graded_invoke(schema, prompt_text):
 # per testare il funzionamento globale dell'agente (con tutti i tool)
 # il secondo per raccogliere dati e metriche più precise per
 # la parte di evaluation.
-DATASET_NAME = os.environ.get("EVAL_DATASET", "AutomotiveBloggerAgent V1.1")
-
+DATASET_NAME = os.environ.get("EVAL_DATASET", "AutomotiveBloggerAgent Dataset 1")
+ # DATASET_NAME = os.environ.get("EVAL_DATASET", "AutomotiveBloggerAgent Dataset 2")
 
 # Legge l'interrupt attualmente pendente dallo snapshot del grafo.
 # Gli interrupt LangGraph espongono il payload passato a interrupt(...) in
