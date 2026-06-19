@@ -69,7 +69,7 @@ summarizer_llm = ChatOllama(
 
 # Prompt per la sintesi di una fonte/articolo.
 SUMMARIZE_ONE_PROMPT = """Sei un assistente che riassume una pagina web per un blog automotive.
-Riassumi il contenuto in italiano in 6-8 frasi complete, mantenendo TUTTI i dati concreti
+Riassumi il contenuto in italiano in 4-6 frasi complete, mantenendo TUTTI i dati concreti
 (modelli, cilindrate, potenze, prezzi, date, luoghi, dichiarazioni). Riporta le unita' di misura
 ESATTAMENTE come nell'originale (NON convertire lb-ft, mph, libbre, ecc.). NON inventare nulla
 che non sia nel testo. Scrivi solo il riassunto, senza preamboli."""
@@ -129,25 +129,10 @@ def _format_output(processed: list) -> str:
     return "\n".join(blocks)
 
 
-# Dizionario di parole chiave per la ricerca di attualità (usato per decidere se usare topic="news" o topic="general")
-_NEWS_KEYWORDS = (
-    "novità", "novita", "salone", "fiera", "presentat", "svelat", "lancio", "lanciat",
-    "ultime", "ultimo", "ultima", "annuncio", "annunciat", "debutto", "debutta",
-    "in arrivo", "2026", "2027", "notizie", "news", "evento", "anteprima",
-)
-
-
-
-# Metodo che sfrutta il dizionario sopra per scegliere il topic
-def _pick_topic(query: str) -> str:
-    q = (query or "").lower()
-    return "news" if any(k in q for k in _NEWS_KEYWORDS) else "general"
-
-
-# Semplificazione della query. Il modello 3B a volte genera query
+# Semplificazione deterministica della query. Il modello 3B a volte genera query
 # lunghissime e "ricche" (es. "Maserati MCPura 2024/2025 prestazioni motore V6 biturbo,
 # design futuristico, recensioni ufficiali, dati tecnici aggiornati") che peggiorano i
-# risultati di Tavily. Taglio alla prima virgola (la parte dopo sono
+# risultati di Tavily. Rete di sicurezza: taglio alla prima virgola (la parte dopo sono
 # quasi sempre criteri accessori) e tengo al massimo le prime 6 parole.
 def _simplify_query(query: str) -> str:
     q = (query or "").strip()
@@ -188,7 +173,7 @@ def _relevance_filter(query: str, results: list) -> list:
             "design", "review", "comparison", "confronto", "ultime", "novità", "novita",
             "performance", "reliability", "specifiche", "scheda", "tecnica", "tecnico",
             "innovazione", "tecnologica", "sportività", "sportivita", "praticità", "praticita",
-            "2024", "2025", "2026", "2027"}
+            "2024", "2025", "2026", "2027", "con", "and", "the", "una", "uno", "della", "delle"}
     keywords = [w.lower() for w in re.findall(r"\w+", query) if len(w) > 3 and w.lower() not in stop]
     if not keywords:
         return results
@@ -199,8 +184,8 @@ def _relevance_filter(query: str, results: list) -> list:
             kept.append(r)
     return kept if kept else results
 
-# Metodo che esegue la logica MCP. L'agente fa una query, dal topic capisco se è una news o no,
-# viene eseguita la ricerca tramite Tavily, deduplico i risultati, scarto i 
+# Metodo che esegue la logica MCP. L'agente fa una query, la ricerca viene eseguita
+# sempre in ambito generico (topic="general"), deduplico i risultati, scarto i 
 # i non articoli, applico il filtro di rilevanza sopra, per ogni risultato ottenuto
 # faccio un riassunto e poi formatto l'output in modo da essere leggibile sia
 # dall'agente che da me su LangSmith.
@@ -208,14 +193,13 @@ def _relevance_filter(query: str, results: list) -> list:
 def search_and_summarize(query: str) -> str:
     try:
         query = _simplify_query(query)
-        topic = _pick_topic(query)
         result = tavily_client.search(
             query=query,
             search_depth=SEARCH_DEPTH,
             max_results=MAX_RESULTS,
             include_raw_content=INCLUDE_RAW,
             include_domains=ALLOWED_DOMAINS,
-            topic=topic,
+            topic="general",
         )
         results = result.get("results", []) if isinstance(result, dict) else []
         results = _deduplicate(results)
