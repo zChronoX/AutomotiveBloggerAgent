@@ -28,7 +28,6 @@ class Configuration:
     """
 
     # Parametri dei modelli locali con Ollama
-    # Ho scelto lo stesso modello tutto il progetto, e per la ricerca.
     model_name: str = "ministral-3:3b"
     draft_model_name: str = "ministral-3:3b"
     model_provider: str = "ollama"

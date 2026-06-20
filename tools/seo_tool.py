@@ -22,13 +22,6 @@ textstat.set_lang("it")
 def analyze_seo_and_readability(text: str, target_keyword: str) -> str:
     total_words = len(text.split())
 
-    # Densita' keyword con match a PAROLA INTERA: evita falsi positivi come
-    # contare "auto" dentro "automobile" o "autostrada".
-    pattern = r"\b" + re.escape(target_keyword.lower()) + r"\b"
-    keyword_count = len(re.findall(pattern, text.lower()))
-    density = (keyword_count / total_words) * 100 if total_words > 0 else 0.0
-
-
     gulpease = textstat.gulpease_index(text)
     gulpease_display = round(max(0.0, min(100.0, gulpease)), 1) 
 
@@ -44,19 +37,7 @@ def analyze_seo_and_readability(text: str, target_keyword: str) -> str:
     else:
         read_level = "Molto tecnico (potrebbe escludere i lettori meno esperti)"
 
-    # Giudizio sulla densita' keyword (range SEO standard: 0.5% - 2.5%)
-    if density < 0.3:
-        kw_level = "troppo bassa, la keyword e' poco presente, considera di usarla di piu'"
-    elif density < 0.5:
-        kw_level = "leggermente bassa, aumentare un po' migliorerebbe il posizionamento"
-    elif density <= 2.5:
-        kw_level = "nel range ottimale SEO"
-    else:
-        kw_level = "troppo alta, c'è rischio di keyword stuffing, riducila un po'"
-
     return (
         "Analisi SEO completata:\n"
-        f"Parola chiave '{target_keyword}' trovata {keyword_count} volte "
-        f"Densità: {density:.2f}% su {total_words} parole - {kw_level}.\n"
         f"Leggibilità (Gulpease): {gulpease_display}/100 - {read_level}."
     )

@@ -171,7 +171,6 @@ def clarification_node(state: dict):
 
         # A questo punto l'interrupt si e' risolto: logghiamo la decisione una volta sola
         # (il codice sopra l'interrupt si riesegue alla ripresa, qui sotto no).
-        reason_lbl = "regola deterministica" if decision_reason == "deterministica" else "valutazione del modello"
         print(f"\nRichiesta giudicata vaga: chiesto chiarimento.")
 
         if rtype == "ignore":
@@ -374,7 +373,7 @@ def _reset_for_new_post(state: dict, next_post: dict) -> dict:
 # Verbi per il parsing deterministico della decisione editoriale.
 # Non usiamo il modello per capire quali proposte e quale operazione
 # (sui test il modellino sbagliava i numeri e ignorava il refill). Numeri e operazione si
-# ricavano con regex affidabili; il modello resta usato SOLO per rigenerare il testo
+# ricavano, il modello resta usato SOLO per rigenerare il testo
 # di una proposta o per generare quelle nuove, cioe' dove serve creativita'.
 _ED_DROP = ("scart", "elimin", "rimuov", "cancell", "togli il", "togli la", "togli i", "togli lo", "non mi interess", "leva il", "leva la")
 _ED_MODIFY = ("modific", "rendil", "rendet", "rendi ", "cambia", "trasform", "fallo", "falla", "fai un", "fai una", "allung", "accorci", "aggiungi", "invece", "confront", "recensi", "trasformal")
@@ -491,6 +490,18 @@ def _propose_more(k: int, brief: str, kg_overview: str, trends: str, exclude: li
     return [p.model_dump() for p in res.planned_posts][:k]
 
 
+
+# Nodo di revisione editoriale, in cui l'utente può revisionare, modificare, scartare, approvare le proposte.
+# Recuperiamo il piano editoriale corrente e i post richiesti dall'utente.
+# Tramite una lista di comandi, l'utente può decidere cosa fare con le proposte.
+# Viene chiamato l'interrupt (HITL) per raccogliere le decisioni dell'utente.
+# Il parser successivamente restiusce una lista di azioni, con index, action e instruction.
+# In cui ci sono le proposte da scrivere (senza modifiche), quelle da scartare e quelle da rigenerare
+# Se non ci sono azioni, o proposte da scrivere senza modifiche, il piano viene ripresentato così per com'è.
+# Successivamente per ogni proposta da modificare, LLM la rigenera secondo le indicazioni dell'utente.
+# Quelle scartate invece vengono rimosse e non vengo più riproposte.
+# Mentre refill serve per rigenerare altre proposte (arrivando al numero chiesto dall'utente), escludendo
+# topic presentati o scartati in precedenza.
 def editorial_review_node(state: dict) -> Command[Literal["editorial_review_node", "research_agent", "__end__"]]:
     plan = state.get("planning_info") or []
     n = state.get("num_posts_requested") or (len(plan) or 3)
@@ -694,7 +705,7 @@ def suggest_topics_node(state: dict) -> Command[Literal["suggest_topics_node", "
     plan = state.get("planning_info") or []
     trends = state.get("trends_summary", "")
 
-    # Ordine di PRIORITA' richiesto: prima le proposte in sospeso (recuperabili da piani
+    # Prima le proposte in sospeso (recuperabili da piani
     # precedenti), poi il nuovo calendario editoriale, infine il feed RSS come ripiego.
     parts = []
 
@@ -875,7 +886,7 @@ def research_agent_node(state: dict):
         "reasoning_trace": trace(state, "FASE 3 - ReAct:\n" + react_line),
     }
 
-# Metodo di ricerca mirata che viene chiamato dopo la revisione da parte dell'utente (Hitl).
+# Metodo di ricerca mirata che viene chiamato dopo la revisione da parte dell'utente nella fase finale (HITL).
 # A differenza di research_agent_node, non ripercorre il K-RAG completo ne' riusa
 # tutta la cronologia accumulata: da' al modello un contesto pulito e una singola
 # istruzione mirata a chiamare il tool giusto per il dato richiesto. Questo evita
@@ -1209,12 +1220,12 @@ def update_kg_node(state: dict) -> Command[Literal["next_post_node"]]:
 
 
 
-# HITL nel ciclo di scrittura multi-post)
+# HITL nel ciclo di scrittura multi-post
 # Dopo ogni post (pubblicato in update_kg_node o scartato in review_node) si passa di
 # qui. Se restano post selezionati, l'agente si ferma e chiede all'utente se continuare,
 # con quale post, o fermarsi. Se si ferma, i rimanenti restano salvati come proposte nel
-# KG (gia' inseriti alla selezione) ed e' tutto recuperabile. Niente avanzamento
-# automatico: e' l'utente a guidare il ritmo (gestione dei tempi di esecuzione locale).
+# KG (già inseriti alla selezione) ed è tutto recuperabile. Niente avanzamento
+# automatico: è l'utente a guidare il ritmo (gestione dei tempi di esecuzione locale).
 
 
 # Sceglie quale post della coda scrivere in base alla risposta dell'utente:
@@ -1234,7 +1245,11 @@ def _pick_next_index(text: str, queue: list) -> int:
             return i
     return 0
 
-
+# Metodo usato nella scrittura multi post, per capire il prossimo post da scrivere (non per forza in ordine)
+# Viene restituita la lista dei post rimasti da scrivere, l'utente (tramite interrupt), può scegliere
+# se scrivere il primo post della coda, uno specifico, oppure niente (rimangono salvate nel KG le proposte)
+# Viene gestita la risposta e poi si avvia alla scrittura del post scelto (estrendolo dalla coda, pulendo lo state
+# e preparando il tutto per il prossimo post)
 def next_post_node(state: dict) -> Command[Literal["research_agent", "__end__"]]:
     queue = list(state.get("selected_posts") or [])
     if not queue:

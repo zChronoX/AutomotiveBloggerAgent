@@ -108,7 +108,7 @@ def generate_cover_image(prompt: str, filename: str = None) -> str:
     try:
         return _genera_flux(enriched_prompt, filepath)
     except Exception as e_flux:
-        msg_flux = f"[Copertina] Cloudflare FLUX non disponibile ({e_flux}); provo il fallback Pollinations..."
+        msg_flux = f"Cloudflare FLUX non disponibile ({e_flux}); provo il fallback Pollinations."
         print(msg_flux)
 
     # Altrimenti vado di Pollinations
